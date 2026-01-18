@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# =====================
+# Project-specific (PF_RUL_journal)
+# =====================
+
+# Datasets (too large / external)
+dataset/
+data/
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+
