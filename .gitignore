@@ -212,8 +212,7 @@ __marimo__/
 # =====================
 
 # Datasets (too large / external)
-dataset/
-data/
+experiments/
 
 # Model checkpoints
 checkpoints/
