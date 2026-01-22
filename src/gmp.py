@@ -291,7 +291,7 @@ class GammaMixtureProcess:
         
     @staticmethod
     def get_lambda_denominator(s,a,p):
-        return np.maximum(a - s ,EPS_POS) ** np.clip((1 / p), a_min=None, a_max=128) 
+        return np.maximum(1 - s/a ,EPS_POS) ** np.clip((1 / p), a_min=None, a_max=128) 
         
         
     ## Private Methods

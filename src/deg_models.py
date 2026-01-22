@@ -7,35 +7,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from skorch import NeuralNet
+# from skorch import NeuralNet
 
 from src.config import EPS_POS
 from src.helpers.math import gamma_stats2params as stats2params
 from src.particle_filter import ParticleFilter
 
+# class DistNet(NeuralNet):
+#     def get_loss(self, y_pred, y_true, *args, **kwargs):
+#         return self.criterion_(y_pred, y_true)
 
-class DistNet(NeuralNet):
-    def get_loss(self, y_pred, y_true, *args, **kwargs):
-        return self.criterion_(y_pred, y_true)
 
-
-def get_time_weights(seq_len, scale=0.0, device=None):
-    x = torch.linspace(0.0, 1.0, seq_len, device=device)
-    w = torch.exp(scale * x)
-    return w / w.sum()
+# def get_time_weights(seq_len, scale=0.0, device=None):
+#     x = torch.linspace(0.0, 1.0, seq_len, device=device)
+#     w = torch.exp(scale * x)
+#     return w / w.sum()
 
 class GammaNLLLoss(nn.Module):
-    def __init__(self, seq_len:int, scale:float=0.0):
+    def __init__(self): #,seq_len:int = 0, scale:float=0.0
         super().__init__()
-        weights = get_time_weights(seq_len, scale=scale)
-        self.weights: torch.Tensor
-        self.register_buffer("weights", weights)
+        # weights = get_time_weights(seq_len, scale=scale)
+        # self.weights: torch.Tensor
+        # self.register_buffer("weights", weights)
 
-    def forward(self, params: dict[str,torch.Tensor], t: torch.Tensor):
-        beta = params["beta"]
-        lamb = params["lambda"]
-        mu = params["mu"]
-
+    def forward(self, gamma_params: torch.Tensor, t: torch.Tensor):
+        beta, lamb, mu = gamma_params.T
         lamb = torch.clamp(lamb, min=1e-8, max=1e6)
 
         t_shifted = t + mu
@@ -47,35 +43,33 @@ class GammaNLLLoss(nn.Module):
 
         nll = term1 - term2 - term3 + term4
 
-        return torch.mean(self.weights * nll)
+        return torch.mean(nll)#self.weights * 
     
 class MSE(nn.Module):
-    def __init__(self, seq_len, scale=0.0):
+    def __init__(self):#, seq_len, scale=0.0
         super().__init__()
-        weights = get_time_weights(seq_len, scale=scale)
-        self.weights: torch.Tensor
-        self.register_buffer("weights", weights)
+        # weights = get_time_weights(seq_len, scale=scale)
+        # self.weights: torch.Tensor
+        # self.register_buffer("weights", weights)
 
-    def forward(self, params: dict, t: torch.Tensor):
-        beta = params["beta"]
-        lamb = params["lambda"]
-        mu = params["mu"]
+    def forward(self, gamma_params: torch.Tensor, t: torch.Tensor):
+        beta, lamb, mu = gamma_params.T
 
         Ts_mean = beta / lamb - mu
         error = Ts_mean - t
 
-        return torch.mean(self.weights * error ** 2)
+        return torch.mean( error ** 2)#self.weights *
     
 class CombinedGammaLoss(nn.Module):
-    def __init__(self, seq_len, nll_scale=0.0, mse_scale=0.0, alpha=0.5):
+    def __init__(self, alpha=0.5):#seq_len, nll_scale=0.0, mse_scale=0.0, 
         super().__init__()
-        self.gamma_nll = GammaNLLLoss(seq_len, scale=nll_scale)
-        self.mse = MSE(seq_len, scale=mse_scale)
+        self.gamma_nll = GammaNLLLoss()#seq_len, scale=nll_scale
+        self.mse = MSE()#seq_len, scale=mse_scale
         self.alpha = alpha
 
-    def forward(self, params: dict, t: torch.Tensor):
-        loss_nll = self.gamma_nll(params, t)
-        loss_mse = self.mse(params, t)
+    def forward(self, gamma_params: torch.Tensor,  t: torch.Tensor):
+        loss_nll = self.gamma_nll(gamma_params, t)
+        loss_mse = self.mse(gamma_params, t)
         return (1.0 - self.alpha) * loss_nll + self.alpha * loss_mse
 
 
@@ -139,7 +133,7 @@ class DistModel(nn.Module):
     # ------------------------------------------------------------------
     @staticmethod
     def lambda_denominator(s: torch.Tensor, a: torch.Tensor, p: torch.Tensor):
-        return torch.clamp(a - s, min=EPS_POS) ** (1.0 / p)
+        return torch.clamp(1 - s/a, min=EPS_POS) ** (1.0 / p)
 
     # ------------------------------------------------------------------
     # Forward
@@ -165,11 +159,7 @@ class DistModel(nn.Module):
         beta = beta.expand_as(lamb_s)
         mu   = mu.expand_as(lamb_s)
 
-        return {
-            "beta": beta,
-            "lambda": lamb_s,
-            "mu": mu,
-        }
+        return torch.stack([beta, lamb_s, mu], dim=1)
 
 class Stopper():
     def __init__(self,change_tol,patiance):
@@ -265,9 +255,7 @@ def fit(model: nn.Module,
                         n_particles=None,
                         title = 'Debugging Plot',
                         resolution=1024)
-                beta = y_hat['beta']
-                lamb_s = y_hat['lambda']
-                mu_pos = y_hat['mu']
+                beta,lamb_s ,mu_pos = y_hat.T
                 Ts_mean = beta/lamb_s-mu_pos
                 plt.plot(Ts_mean.detach().numpy(),data[1],'-',color='orange',alpha=0.6,label='mean')
                 
