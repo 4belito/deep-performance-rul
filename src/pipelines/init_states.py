@@ -1,25 +1,71 @@
-
-
 import copy
+from pathlib import Path
 
 import numpy as np
+import torch
 from matplotlib import pyplot as plt
 from skorch import NeuralNetRegressor
-from skorch.callbacks import Callback, Checkpoint
+from skorch.callbacks import Callback
 
 from src.models.normal_deg import NormalDegradationModel
 
+
+class BestModelTracker(Callback):
+    def __init__(
+        self,
+        monitor: str = "train_loss",
+        min_delta: float = 0.0,
+        save_dir: Path | str = ".",
+        f_params: str = "best_model.pt",
+        load_best: bool = False,   # optional
+    ):
+        self.monitor = monitor
+        self.min_delta = min_delta
+        self.save_dir = Path(save_dir)
+        self.f_params = f_params
+        self.load_best = load_best
+
+    def initialize(self):
+        self.best_loss = float("inf")
+        self.best_state_dict = None
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        return self
+
+    def on_epoch_end(self, net: NeuralNetRegressor, **kwargs):
+        current_loss = float(net.history[-1, self.monitor])
+
+        if current_loss < self.best_loss - self.min_delta:
+            self.best_loss = current_loss
+            self.best_state_dict = copy.deepcopy(
+                net.module_.state_dict()
+            )
+
+    def on_train_end(self, net: NeuralNetRegressor, **kwargs):
+        if self.best_state_dict is None:
+            return
+
+        if self.load_best:
+            net.module_.load_state_dict(self.best_state_dict)
+
+        torch.save(
+            self.best_state_dict,
+            self.save_dir / self.f_params,
+        )
 
 class PlotNormalDistWithData(Callback):
     def __init__(
         self,
         t_grid: np.ndarray,
         s_grid: np.ndarray,
-        time_data,
-        perform_data,
-        plot_every: int = 500,
+        time_data=None,
+        perform_data=None,
+        plot_every: int | None = None,   # None → no periodic plots
         func: str = "pdf",
         title: str = "Normal PDF of $T_s$",
+        plot_at_end: bool = True,
+        show: bool = False,              # ← show interactively?
+        save_dir: str | Path | None = None,  # ← save figures here if not None
+        dpi: int = 150,
     ):
         self.t_grid = t_grid
         self.s_grid = s_grid
@@ -28,98 +74,86 @@ class PlotNormalDistWithData(Callback):
         self.plot_every = plot_every
         self.func = func
         self.title = title
+        self.plot_at_end = plot_at_end
+        self.show = show
+        self.save_dir = Path(save_dir) if save_dir is not None else None
+        self.dpi = dpi
 
-    def on_epoch_end(self, net: NeuralNetRegressor, **kwargs):
-        epoch = net.history[-1]["epoch"]
+        if self.save_dir is not None:
+            self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        if epoch % self.plot_every != 0:
+    def set_save_dir(self, save_dir):
+        if save_dir is None:
+            self.save_dir = None
             return
 
-        model:NormalDegradationModel = copy.deepcopy(net.module_).cpu()
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        _ , ax = plt.subplots(figsize=(10, 6))
 
-        # --- distribution ---
+    # -------- shared plotting logic --------
+    def _plot(self, model: NormalDegradationModel, title: str, suffix: str):
+        _, ax = plt.subplots(figsize=(10, 6))
+
         model.plot_distribution(
             t=self.t_grid,
             s=self.s_grid,
             func=self.func,
             ax=ax,
-            title=f"{self.title} (epoch {epoch})",
+            title=title,
         )
 
-        # --- overlay data ---
-        ax.plot(self.time_data,self.perform_data,'o-',
-			color='white',alpha=0.3,markersize=4,markeredgecolor='black',markeredgewidth=0.8,
-			label='data')
+        if self.time_data is not None and self.perform_data is not None:
+            ax.plot(
+                self.time_data,
+                self.perform_data,
+                "o-",
+                color="white",
+                alpha=0.3,
+                markersize=4,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                label="data",
+            )
+            ax.legend()
 
-        ax.legend()
         plt.tight_layout()
-        plt.show()
-        
 
-class ThresholdCheckpoint(Callback):
-    def __init__(
-        self,
-        checkpoint: Checkpoint,
-        monitor: str = "train_loss",
-        min_delta: float = 0.01,
-        tol:float=1e-6,
-    ):
-        self.checkpoint = checkpoint
-        self.monitor = monitor
-        self.min_delta = min_delta
-        self.best_loss = np.inf
-        self.tol = tol
-        self.activated = False
-        self.best_saved_loss = np.inf
+        # ---- save if requested ----
+        if self.save_dir is not None:
+            fname = f"{self.title.replace(' ', '_')}_{suffix}.png"
+            plt.savefig(self.save_dir / fname, dpi=self.dpi, bbox_inches="tight")
 
-    def on_epoch_end(self, net:NeuralNetRegressor, **kwargs):
-        current_loss = net.history[-1][self.monitor]
+        # ---- show or close ----
+        if self.show:
+            plt.show()
+        else:
+            plt.close()
 
-        # save only if improvement over LAST SAVED model is significant
-        if not self.activated:
-            if current_loss < self.best_loss - self.tol:
-                self.best_loss = current_loss
-            else:
-                # first non-improving epoch → activate
-                self.activated = True
-        
-        if self.activated and (current_loss < self.best_saved_loss - self.min_delta):
-            self.best_saved_loss = current_loss
-            self.checkpoint.on_epoch_end(net, **kwargs)
+    # -------- periodic plotting --------
+    def on_epoch_end(self, net: NeuralNetRegressor , **kwargs):
+        if self.plot_every is None:
+            return
 
-class DelayedCheckpoint(Callback):
-    def __init__(self, checkpoint:Checkpoint, start_epoch: int):
-        self.checkpoint = checkpoint
-        self.start_epoch = start_epoch
-
-    def on_epoch_end(self, net:NeuralNetRegressor, **kwargs):
         epoch = net.history[-1]["epoch"]
-        if epoch >= self.start_epoch:
-            self.checkpoint.on_epoch_end(net, **kwargs)
+        if epoch % self.plot_every != 0:
+            return
 
+        model = net.module_.cpu()
+        self._plot(
+            model,
+            title=f"{self.title} (epoch {epoch})",
+            suffix=f"epoch_{epoch}",
+        )
 
+    # -------- final plotting --------
+    def on_train_end(self, net:NeuralNetRegressor, **kwargs):
+        if not self.plot_at_end:
+            return
 
-class LossTriggeredCheckpoint(Callback):
-    def __init__(self, checkpoint: Checkpoint, monitor: str = "train_loss",tol:float = 1e-6):
-        self.checkpoint = checkpoint
-        self.monitor = monitor
-        self.tol = tol
-        self.best_loss = np.inf
-        self.activated = False
-
-    def on_epoch_end(self, net, **kwargs):
-        current_loss = net.history[-1][self.monitor]
-
-        # before activation: watch for first non-improvement
-        if not self.activated:
-            if current_loss < self.best_loss - self.tol:
-                self.best_loss = current_loss
-            else:
-                # first non-improving epoch → activate
-                self.activated = True
-
-        # after activation: delegate to checkpoint
-        if self.activated:
-            self.checkpoint.on_epoch_end(net, **kwargs)
+        model = net.module_.cpu()
+        self._plot(
+            model,
+            title=f"{self.title} (final)",
+            suffix="final",
+        )

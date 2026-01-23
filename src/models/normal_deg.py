@@ -24,7 +24,7 @@ class NormalDegradationModel(nn.Module):
     def __init__(self,onset: float = 0.0):
         super().__init__()
 
-        self.onset = onset
+        self.register_buffer("onset", torch.tensor(float(onset)))
         self.m0_raw = nn.Parameter(torch.logit(torch.tensor(0.9999)))
         self.m1_raw  = nn.Parameter(inv_softplus(torch.tensor(100)))
         self.p_raw  = nn.Parameter(inv_softplus(torch.tensor(1.0)))
@@ -110,7 +110,8 @@ class NormalDegradationModel(nn.Module):
 
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 6))
-        ax.axvline(x=self.onset, linestyle="--",color="#4CC9F0", label="onset")
+        onset = self.onset.cpu().item()
+        ax.axvline(x=onset, linestyle="--",color="#4CC9F0", label="onset")
         norm = mcolors.PowerNorm(
             gamma=gamma_prob,
             vmin=0,
