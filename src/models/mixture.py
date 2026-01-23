@@ -1,16 +1,16 @@
 import torch
 import torch.distributions as dist
 
-from src.models.deg_model import DEGModel, DistributionPlot
+from src.models.degradation import DegModel, StochasticProcessModel
 
 
-class MixtureDEGModel(DistributionPlot):
+class MixtureDegModel(StochasticProcessModel):
     """
-    Homogeneous mixture of DEGModels.
+    Homogeneous mixture of DegModels.
     P = number of parameters per component
     K = number of mixture components
     """
-    def __init__(self, components: list[DEGModel], weights: torch.Tensor):
+    def __init__(self, components: list[DegModel], weights: torch.Tensor):
         super().__init__()
 
         self.K = len(components)
@@ -56,4 +56,36 @@ class MixtureDEGModel(DistributionPlot):
         components_dist = self.model.build_distribution_from_params(params)
         mixture = dist.Categorical(self.weights)
         return dist.MixtureSameFamily(mixture, components_dist)
+    
+
+    # ---------------------------
+    # Fast Monte-Carlo quantiles 
+    # ---------------------------
+    @torch.no_grad()
+    def quantile_mc(
+        self,
+        s: torch.Tensor,        # [B]
+        q: float,
+        n_samples: int = 4096,
+    ) -> torch.Tensor:
+        """
+        Monte-Carlo estimate of the q-quantile.
+
+        Parameters
+        ----------
+        s : torch.Tensor
+            Performance values, shape [B]
+        q : float
+            Quantile in (0, 1)
+        n_samples : int
+            Number of samples per s [N]
+
+        Returns
+        -------
+        q_s : torch.Tensor
+            Quantiles, shape [B]
+        """
+        dist_s = self.distribution(s)          # MixtureSameFamily
+        samples = dist_s.sample((n_samples,)) # [N, B]
+        return torch.quantile(samples, q, dim=0)
     
