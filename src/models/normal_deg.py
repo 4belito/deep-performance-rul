@@ -8,6 +8,8 @@ import torch.distributions as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.models.deg_model import DEGModel
+
 
 def inv_softplus(x, eps=1e-6):
     x = torch.as_tensor(x)
@@ -17,13 +19,14 @@ def inv_softplus(x, eps=1e-6):
         torch.log(torch.expm1(torch.clamp(x, min=eps)))
     )
 
-class NormalDegradationModel(nn.Module):
+class NormalDegradationModel(DEGModel):
     MEAN_PARAMS = ["m0_raw", "m1_raw", "p_raw"]
     VAR_PARAMS  = ["v0", "v1"]
+    distribution_class = dist.Normal
     
     def __init__(self,onset: float = 0.0):
         super().__init__()
-
+        self.onset: torch.Tensor
         self.register_buffer("onset", torch.tensor(float(onset)))
         self.m0_raw = nn.Parameter(torch.logit(torch.tensor(0.9999)))
         self.m1_raw  = nn.Parameter(inv_softplus(torch.tensor(100)))
@@ -36,7 +39,7 @@ class NormalDegradationModel(nn.Module):
         
     @property
     def m0(self):
-        return F.sigmoid(self.m0_raw)
+        return torch.sigmoid(self.m0_raw)
     
     @property
     def m1(self):
@@ -55,24 +58,29 @@ class NormalDegradationModel(nn.Module):
     def v1(self):
         return F.softplus(self.v1_raw)
     
-    def forward(self, s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        mean_Ts = self.m1 * torch.clamp(1-s/self.m0,min=0).pow(self.p)
-        var_Ts  = 0.25 + (self.v0 + self.v1 * s).pow(2)
-        return mean_Ts, var_Ts
-
-    def distribution(self, s: torch.Tensor) -> dist.Normal:
-        m_s, v_s = self(s)
-        return dist.Normal(m_s, torch.sqrt(v_s.clamp_min(1e-6)))
+    def build_distribution(self, params: torch.Tensor) -> dist.Normal:
+        mean = params[..., 0]
+        var  = params[..., 1]
+        std  = torch.sqrt(var.clamp_min(1e-6))
+        return self.distribution_class(mean, std)
     
-    def freeze_params(self, names):
-        for n, p in self.named_parameters():
-            if any(n.startswith(name) for name in names):
-                p.requires_grad_(False)
+    
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        mean_Ts = self.m1 * torch.clamp(1 - s / self.m0, min=0).pow(self.p)
+        var_Ts  = 0.25 + (self.v0 + self.v1 * s).pow(2)
 
-    def unfreeze_params(self, names):
-        for n, p in self.named_parameters():
-            if any(n.startswith(name) for name in names):
-                p.requires_grad_(True)
+        # shape: [..., 2]  (mean, variance)
+        return torch.stack([mean_Ts, var_Ts], dim=-1)
+
+    def tuple_forward(self, s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns (mean, variance) as separate tensors.
+        Convenience wrapper around forward().
+        """
+        params = self.forward(s)
+        mean = params[..., 0]
+        var  = params[..., 1]
+        return mean, var
                 
     def plot_distribution(
         self,
@@ -103,7 +111,7 @@ class NormalDegradationModel(nn.Module):
                 raise ValueError("func must be 'pdf' or 'cdf'")
 
             # ---- mean curve ----
-            mean_Ts, _ = self(torch.tensor(s, dtype=torch.float32, device=device))
+            mean_Ts,_ = self.tuple_forward(torch.tensor(s, dtype=torch.float32, device=device))
 
         Z = Z.reshape(S.shape).cpu().numpy()
         mean_Ts = mean_Ts.cpu().numpy()
@@ -139,9 +147,10 @@ class NormalDegradationModel(nn.Module):
 
 class NormalDegradationNLL(nn.Module):
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
-        mean_Ts, var_Ts = y_pred
-        t = y_true
-        dist_s = dist.Normal(mean_Ts, torch.sqrt(var_Ts.clamp_min(1e-6)))
-        loss = -(dist_s.log_prob(t)).mean()
+        mean_Ts = y_pred[..., 0]
+        var_Ts  = y_pred[..., 1]
+        std = torch.sqrt(var_Ts.clamp_min(1e-6))
+        dist_s = dist.Normal(mean_Ts, std)
+        loss = -(dist_s.log_prob(y_true)).mean()
         return loss
     
