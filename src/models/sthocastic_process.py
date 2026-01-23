@@ -156,68 +156,6 @@ class StochasticProcessModel(nn.Module,abc.ABC):
 
         return ax
 
-    # def plot_distribution(
-    #     self,
-    #     t: np.ndarray,
-    #     s: np.ndarray,
-    #     func: str = "pdf",
-    #     ax: plt.Axes | None = None,
-    #     vmax: float | None = None,
-    #     gamma_prob: float = 0.3,
-    #     title: str = "Distribution of $T_s$",
-    #     plot_mean: bool = True,
-    #     mean_kwargs: dict | None = None,
-    # ) -> plt.Axes:
-
-    #     device = self._device()
-
-    #     # grid
-    #     T, S = np.meshgrid(t, s)
-    #     s_torch = torch.tensor(S.flatten(), dtype=torch.float32, device=device)
-    #     t_torch = torch.tensor(T.flatten(), dtype=torch.float32, device=device)
-
-    #     with torch.no_grad():
-    #         dist_ts = self.distribution(s_torch)
-
-    #         if func == "pdf":
-    #             Z = dist_ts.log_prob(t_torch).exp()
-    #         elif func == "cdf":
-    #             Z = dist_ts.cdf(t_torch)
-    #         else:
-    #             raise ValueError("func must be 'pdf' or 'cdf'")
-
-    #         if plot_mean:
-    #             s_line = torch.tensor(s, dtype=torch.float32, device=device)
-    #             mean_Ts = self.distribution(s_line).mean
-
-    #     Z = Z.reshape(S.shape).cpu().numpy()
-    #     if plot_mean:
-    #         mean_Ts = mean_Ts.cpu().numpy()
-
-    #     if ax is None:
-    #         _, ax = plt.subplots(figsize=(10, 6))
-
-    #     norm = mcolors.PowerNorm(
-    #         gamma=gamma_prob,
-    #         vmin=0,
-    #         vmax=vmax if vmax is not None else np.percentile(Z, 99),
-    #     )
-
-    #     c = ax.pcolormesh(T, S, Z, shading="auto", cmap="viridis", norm=norm)
-    #     plt.colorbar(c, ax=ax, label=func)
-
-    #     if plot_mean:
-    #         if mean_kwargs is None:
-    #             mean_kwargs = dict(color="orange", lw=2, label="mean")
-    #         ax.plot(mean_Ts, s, **mean_kwargs)
-
-    #     ax.set_title(title)
-    #     ax.set_xlabel("time")
-    #     ax.set_ylabel("scaled performance")
-    #     ax.set_xlim([0, t.max()])
-    #     ax.legend()
-
-    #     return ax
     def plot_distribution(
         self,
         t: np.ndarray,
@@ -273,6 +211,9 @@ class StochasticProcessModel(nn.Module,abc.ABC):
                 mean_kwargs = dict(color="orange", lw=2, label="mean")
             ax.plot(mean_Ts, s, **mean_kwargs)
 
+         # 👇 extension point
+        self._post_plot(ax)
+
         ax.set_title(title)
         ax.set_xlabel("time")
         ax.set_ylabel("scaled performance")
@@ -280,3 +221,8 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         ax.legend()
 
         return ax
+    
+    # --- hook (extension point) ---
+    def _post_plot(self, ax: plt.Axes):
+        """Hook for subclasses to add extra plot elements."""
+        pass

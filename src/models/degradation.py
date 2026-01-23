@@ -1,5 +1,6 @@
 import abc
 
+import matplotlib.pyplot as plt
 import torch
 import torch.distributions as dist
 
@@ -13,6 +14,7 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     def __init__(self, onset: float = 0.0):
         super().__init__()
+        self.onset: float
         self.register_buffer("onset", torch.tensor(float(onset)))
 
     # ---------- REQUIRED API ----------
@@ -55,3 +57,12 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         return self.build_distribution_from_params(self.forward(s))
+    
+    def _post_plot(self, ax: plt.Axes):
+        onset = self.onset
+        ax.axvline(
+            x=onset,
+            linestyle="--",
+            color="#4CC9F0",
+            label="onset"
+        )
