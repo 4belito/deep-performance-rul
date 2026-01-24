@@ -53,9 +53,18 @@ class MixtureDegModel(StochasticProcessModel):
         """
         params: [B, K, DP]
         """
+        # component distribution: batch [B, K]
         components_dist = self.model.build_distribution_from_params(params)
-        mixture = dist.Categorical(self.weights)
+
+        B = params.shape[0]
+
+        # expand mixture weights to [B, K]
+        mixture = dist.Categorical(
+            probs=self.weights.expand(B, -1)
+        )
+
         return dist.MixtureSameFamily(mixture, components_dist)
+    
     
 
     # ---------------------------

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.distributions as dist
 
-from src.models.sthocastic_process import StochasticProcessModel
+from src.models.stochastic_process import StochasticProcessModel
 
 
 class DegModel(StochasticProcessModel, abc.ABC):
