@@ -24,7 +24,19 @@ class DegModel(StochasticProcessModel, abc.ABC):
         Return the raw parameter vector.
         """
         raise NotImplementedError
-    
+
+    @abc.abstractmethod
+    def set_raw_param_vector(self, raw_params: torch.Tensor) -> None:
+        """
+        Set the raw parameter vector from an external estimator.
+
+        Parameters
+        ----------
+        raw_params : torch.Tensor
+            Tensor of shape [RP]
+        """
+        raise NotImplementedError
+
     @staticmethod
     @abc.abstractmethod
     def build_distribution_from_params(params: torch.Tensor) -> dist.Distribution:
@@ -35,7 +47,7 @@ class DegModel(StochasticProcessModel, abc.ABC):
     @abc.abstractmethod
     def forward_with_raw_parameters(
         s: torch.Tensor,
-        raw_params: torch.Tensor,   # [..., RP]
+        raw_params: torch.Tensor,  # [..., RP]
     ) -> torch.Tensor:
         """
         s: Tensor of shape [B]
@@ -44,8 +56,10 @@ class DegModel(StochasticProcessModel, abc.ABC):
         """
         raise NotImplementedError
 
-
     # ---------- GENERIC METHODS ----------
+    def get_onset(self) -> float:
+        return float(self.onset)
+
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
         s: Tensor of shape [B]
@@ -57,12 +71,7 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         return self.build_distribution_from_params(self.forward(s))
-    
+
     def _post_plot(self, ax: plt.Axes):
         onset = self.onset
-        ax.axvline(
-            x=onset,
-            linestyle="--",
-            color="#4CC9F0",
-            label="onset"
-        )
+        ax.axvline(x=onset, linestyle="--", color="#4CC9F0", label="onset")
