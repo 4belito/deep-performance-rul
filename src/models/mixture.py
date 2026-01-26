@@ -27,7 +27,7 @@ class MixtureDegModel(StochasticProcessModel):
         onsets = torch.tensor([c.get_onset() for c in components])
 
         self._init_from_tensors(
-            deg_model_class=type(components[0]),
+            deg_class=type(components[0]),
             raw_params=raw_params,
             weights=weights,
             onsets=onsets,
@@ -35,7 +35,7 @@ class MixtureDegModel(StochasticProcessModel):
 
     def _init_from_tensors(
         self,
-        deg_model_class: type[DegModel],
+        deg_class: type[DegModel],
         raw_params: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
@@ -45,7 +45,7 @@ class MixtureDegModel(StochasticProcessModel):
         assert raw_params.shape[0] == weights.shape[0]
 
         self.K, self.RP = raw_params.shape
-        self.deg_model_class = deg_model_class
+        self.deg_class = deg_class
         self.raw_params: torch.Tensor
         self.weights: torch.Tensor
         self.onsets: torch.Tensor
@@ -61,7 +61,7 @@ class MixtureDegModel(StochasticProcessModel):
     @classmethod
     def from_particles(
         cls,
-        deg_model_class: type[DegModel],
+        deg_class: type[DegModel],
         raw_params: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
@@ -73,7 +73,7 @@ class MixtureDegModel(StochasticProcessModel):
         super(MixtureDegModel, obj).__init__()
 
         obj._init_from_tensors(
-            deg_model_class=deg_model_class,
+            deg_class=deg_class,
             raw_params=raw_params,
             weights=weights,
             onsets=onsets,
@@ -92,14 +92,14 @@ class MixtureDegModel(StochasticProcessModel):
         params : torch.Tensor
             Shape [B, K, DP]   (batch, component, distribution params)
         """
-        return self.deg_model_class.forward_with_raw_parameters(s, self.raw_params)
+        return self.deg_class.forward_with_raw_parameters(s, self.raw_params)
 
     def build_mixture_distribution(self, params: torch.Tensor) -> dist.Distribution:
         """
         params: [B, K, DP]
         """
         # component distribution: batch [B, K]
-        components_dist = self.deg_model_class.build_distribution_from_params(params)
+        components_dist = self.deg_class.build_distribution_from_params(params)
 
         B = params.shape[0]
 
@@ -117,24 +117,18 @@ class MixtureDegModel(StochasticProcessModel):
     def get_onsets(self) -> torch.Tensor:
         return self.onsets
 
+    @torch.no_grad()
     def update(
-        self, raw_params: torch.Tensor, weights: torch.Tensor, onsets: torch.Tensor | None = None
+        self,
+        raw_params: torch.Tensor | None = None,
+        weights: torch.Tensor | None = None,
+        onsets: torch.Tensor | None = None,
     ):
-        """
-        Update mixture components and weights.
-        """
-        assert (
-            raw_params.shape == self.raw_params.shape
-        ), f"Expected shape {self.raw_params.shape}, got {raw_params.shape}"
-        assert (
-            weights.shape == self.weights.shape
-        ), f"Expected shape {self.weights.shape}, got {weights.shape}"
-        assert onsets is None or (
-            onsets.shape == self.onsets.shape
-        ), f"Expected shape {self.onsets.shape}, got {onsets.shape}"
-
-        self.raw_params.copy_(raw_params)
-        self.weights.copy_(weights / weights.sum().clamp_min(1e-12))
+        if raw_params is not None:
+            self.raw_params.copy_(raw_params)
+        if weights is not None:
+            self.weights.copy_(weights)
+            self.weights /= self.weights.sum().clamp_min(1e-12)
         if onsets is not None:
             self.onsets.copy_(onsets)
 

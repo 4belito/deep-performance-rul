@@ -25,16 +25,12 @@ class ParticleFilterMLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
-        raw_out = self.net(x)
-        return F.softplus(raw_out)
+        return F.softplus(self.net(x))
 
     def tuple_forward(self, x):
-        """
-        Returns (spatial, selection) as separate tensors.
-        """
-        output = self.forward(x)
-        spatial = output[..., :-1]
-        selection = output[..., -1]
+        out = self.forward(x)
+        spatial = out[..., :-1]
+        selection = out[..., -1]
         return spatial, selection
 
 
@@ -97,104 +93,163 @@ class DiagonalMahalanobisNoise(nn.Module):
 
 
 class ParticleFilterModel(nn.Module):
+    """
+    Particle Filter over raw degradation-model parameters.
+    """
+
     def __init__(
         self,
-        base_models: list[DegModel],  # [N, d] raw parameters
+        base_models: list[DegModel],
         net: ParticleFilterMLP,
         max_life: float,
-        n_particles: int | None = None,
+        n_particles: int,
         multiply_scale: float = 1e-3,
         name: str = "perform_name",
     ):
         super().__init__()
 
-        assert len(base_models) > 0, "At least one base model is required"
-        base_states, base_onsets = self.extract_parameters(base_models)
+        assert len(base_models) > 0, "At least one base model required"
+        assert len({type(m) for m in base_models}) == 1, "All base models must be of the same class"
 
-        self.N, self.d = base_states.shape
-        self.max_life = max_life
         self.net = net
+        self.max_life = max_life
         self.name = name
         self.multiply_scale = float(multiply_scale)
 
-        n_particles = self._resolve_n_particles(n_particles)
+        base_states, base_onsets = self._extract_parameters(base_models)
 
-        self.noise_model = DiagonalMahalanobisNoise()
-        self.noise_model.fit(base_states)
+        # --- noise model ---
+        self.noise = DiagonalMahalanobisNoise()
+        self.noise.fit(base_states)
 
-        self._init_particles(base_states, base_onsets, n_particles)
-        self._init_weights(n_particles)
-        self.mixture_model = MixtureDegModel.from_particles(
-            deg_model_class=type(base_models[0]),
-            raw_params=self.states,
-            weights=self.weights,
+        # --- mixture model ---
+        self.mixture = self._init_mixture(
+            deg_class=type(base_models[0]),
+            base_states=base_states,
+            base_onsets=base_onsets,
+            n_particles=n_particles,
         )
 
     # --------------------------------------------------------
-    # Initialization helpers
+    # Core PF steps
     # --------------------------------------------------------
 
-    def _resolve_n_particles(self, n_particles):
-        n_particles = n_particles or self.N
-        assert (
-            n_particles % self.N == 0
-        ), f"n_particles ({n_particles}) must be a multiple of base_states ({self.N})"
-        return n_particles
-
-    def _init_particles(
-        self, base_states: torch.Tensor, base_onsets: torch.Tensor, n_particles: int
-    ):
+    @torch.no_grad()
+    def resample(self):
         """
-        Replicate base particles and apply PF roughening.
+        Multinomial resampling.
         """
-        repeat_factor = n_particles // self.N
+        n = self.n_particles
+        idx = torch.multinomial(self.mixture.weights, n, replacement=True)
 
-        states = self._multiply_particles(
-            base_states,
-            repeat_factor,
-            self.multiply_scale,
+        self.mixture.update(
+            raw_params=self.mixture.raw_params[idx],
+            weights=torch.full((n,), 1.0 / n, device=self.mixture.weights.device),
+            onsets=self.mixture.onsets[idx],
         )
-        onsets = base_onsets.repeat(repeat_factor)
 
-        self.register_buffer("states", states)
-        self.register_buffer("onsets", onsets)
-        self.states: torch.Tensor
-        self.onsets: torch.Tensor
-
-    def _init_weights(self, n_particles):
+    @torch.no_grad()
+    def prediction(self, noise_scale: float | torch.Tensor):
         """
-        Initialize uniform particle weights.
+        PF prediction: resample + roughening.
         """
-        probs = torch.full((n_particles,), 1.0 / n_particles)
-        self.register_buffer("weights", probs)
-        self.weights: torch.Tensor
+        self.resample()
 
-    def extract_parameters(self, base_models: list[DegModel]):
-        base_states = []
-        base_onsets = []
-        for model in base_models:
-            base_states.append(model.get_raw_param_vector())
-            base_onsets.append(model.get_onset())
-        base_states = torch.stack(base_states, dim=0)  # [N, d]
-        base_onsets = torch.tensor(base_onsets)  # [N]
-        return base_states, base_onsets
+        new_states = self.noise(self.mixture.raw_params, scale=noise_scale)
+
+        self.mixture.update(raw_params=new_states)
+
+    @torch.no_grad()
+    def correction(self, s_obs: torch.Tensor, t_obs: torch.Tensor):
+        """
+        Particle-wise measurement update (matches old GMP logic).
+
+        s_obs : [B]
+        t_obs : [B]
+        """
+
+        # params: [B, K, DP]
+        params = self.mixture.forward(s_obs)
+
+        # component distributions (NO mixture)
+        comp_dist = self.deg_class.build_distribution_from_params(params)
+
+        # log-likelihoods per particle
+        log_lik = comp_dist.log_prob(t_obs.unsqueeze(1))  # [B, K]
+
+        # aggregate over batch (system-level obs)
+        log_lik = log_lik.mean(dim=0)  # [K]
+
+        # Bayesian update
+        log_w = torch.log(self.mixture.weights + 1e-12) + log_lik
+        new_weights = torch.softmax(log_w, dim=0)
+
+        self.mixture.update(weights=new_weights)
+
+    @torch.no_grad()
+    def step(self, s_obs: torch.Tensor, y_obs: torch.Tensor, noise_scale):
+        self.prediction(noise_scale)
+        self.correction(s_obs, y_obs)
 
     # --------------------------------------------------------
-    # PF utilities
+    # Helpers
     # --------------------------------------------------------
 
-    def _multiply_particles(
+    @property
+    def deg_class(self) -> type[DegModel]:
+        return self.mixture.deg_class
+
+    @property
+    def n_particles(self) -> int:
+        return self.mixture.K
+
+    @property
+    def state_dim(self) -> int:
+        return self.mixture.RP
+
+    @property
+    def states(self) -> torch.Tensor:
+        return self.mixture.raw_params
+
+    @property
+    def weights(self) -> torch.Tensor:
+        return self.mixture.weights
+
+    @staticmethod
+    def _extract_parameters(base_models: list[DegModel]):
+        states = []
+        onsets = []
+        for m in base_models:
+            states.append(m.get_raw_param_vector())
+            onsets.append(m.get_onset())
+        return torch.stack(states, dim=0), torch.tensor(onsets)
+
+    def _init_mixture(
         self,
+        deg_class: type[DegModel],
         base_states: torch.Tensor,
-        repeat_factor: int,
-        scale: float,
-    ) -> torch.Tensor:
-        """
-        Replicate base states and apply diagonal Mahalanobis roughening.
-        """
-        states = base_states.repeat(repeat_factor, 1)
+        base_onsets: torch.Tensor,
+        n_particles: int,
+    ):
+        base_n = base_states.shape[0]
+        assert (
+            n_particles % base_n == 0
+        ), "n_particles must be a multiple of the number of base models"
+
+        # --- initialize particles ---
+        repeat = n_particles // base_n
+        states = base_states.repeat(repeat, 1)
+        onsets = base_onsets.repeat(repeat)
 
         with torch.no_grad():
-            states = self.noise_model(states, scale=scale)
+            states = self.noise(states, scale=self.multiply_scale)
 
-        return states
+        weights = torch.full((n_particles,), 1.0 / n_particles)
+
+        # --- mixture is the SINGLE source of truth ---
+        return MixtureDegModel.from_particles(
+            deg_class=deg_class,
+            raw_params=states,
+            weights=weights,
+            onsets=onsets,
+        )
