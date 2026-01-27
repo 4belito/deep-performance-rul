@@ -31,9 +31,9 @@ class ParticleFilterMLP(nn.Module):
 
     def tuple_forward(self, x):
         out = self.forward(x)
-        spatial = out[..., :-1]
-        selection = out[..., -1]
-        return spatial, selection
+        noise_scale = out[..., :-1]
+        correct_scale = out[..., -1]
+        return noise_scale, correct_scale
 
 
 # ============================================================
@@ -91,7 +91,6 @@ class ParticleFilterModel(nn.Module):
     def __init__(
         self,
         base_models: list[DegModel],
-        net: ParticleFilterMLP,
         max_life: float,
         n_particles: int,
         multiply_scale: float = 1e-3,
@@ -102,7 +101,7 @@ class ParticleFilterModel(nn.Module):
         assert len(base_models) > 0, "At least one base model required"
         assert len({type(m) for m in base_models}) == 1, "All base models must be of the same class"
 
-        self.net = net
+        self.net = ParticleFilterMLP(layer_dims=[2, 32, 32, 16, 2])
         self.max_life = max_life
         self.name = name
         self.multiply_scale = float(multiply_scale)
@@ -139,21 +138,17 @@ class ParticleFilterModel(nn.Module):
             onsets=self.onsets[idx],
         )
 
-    @torch.no_grad()
     def prediction(self, noise_scale: float | torch.Tensor):
         """
         PF prediction: resample + roughening.
         """
-        self.resample()
-
         new_states = self.noise(self.states, scale=noise_scale)
 
         self.mixture.update(raw_params=new_states)
 
-    @torch.no_grad()
-    def correction(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+    def correction(self, t_obs: torch.Tensor, s_obs: torch.Tensor, correct_scale: torch.Tensor):
         """
-        Particle-wise measurement update (matches old GMP logic).
+        Particle-wise measurement update.
 
         s_obs : [B]
         t_obs : [B]
@@ -169,18 +164,55 @@ class ParticleFilterModel(nn.Module):
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1))  # [B, K]
 
         # aggregate over batch (system-level obs)
-        log_lik, _ = log_lik.mean(dim=0)  # [K]
+        log_lik = log_lik.mean(dim=0)  # [K]
 
         # Bayesian update
-        log_w = torch.log(self.mixture.weights + 1e-12) + log_lik
+        log_w = correct_scale * log_lik  # torch.log(self.mixture.weights + 1e-12) + log_lik
         new_weights = torch.softmax(log_w, dim=0)
 
         self.mixture.update(weights=new_weights)
 
-    @torch.no_grad()
-    def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor, noise_scale: float):
-        self.prediction(noise_scale)
-        self.correction(t_obs, s_obs)
+    def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor, eol: torch.Tensor):
+        # 1. NN controls
+        x = torch.cat([t_obs.unsqueeze(-1), s_obs.unsqueeze(-1)], dim=-1)
+        noise_scale, correct_scale = self.net.tuple_forward(x)
+        noise_scale = noise_scale.mean()
+        correct_scale = correct_scale.mean()
+
+        # 2. Resample (DATA)
+        with torch.no_grad():
+            self.resample()
+
+        # 3. Predict (DIFFERENTIABLE)
+        old_states = self.states.detach()
+        pred_states = self.noise(old_states, scale=noise_scale)
+
+        # 4. Temporary belief (NO mutation)
+        params = self.deg_class.forward_with_raw_parameters(s_obs, pred_states)
+        comp_dist = self.deg_class.build_distribution_from_params(params)
+        log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
+
+        log_w = correct_scale * log_lik
+        weights = torch.softmax(log_w, dim=0)
+
+        temp_mixture = MixtureDegModel.from_particles(
+            deg_class=self.deg_class,
+            raw_params=pred_states,
+            weights=weights,
+            onsets=self.onsets,
+        )
+
+        # 5. Loss on belief
+        eol_dist = temp_mixture.distribution(s=torch.tensor([0.0], device=pred_states.device))
+        loss = -eol_dist.log_prob(eol.unsqueeze(0)).mean()
+
+        # 6. Commit belief (STOP GRAD)
+        self.mixture.update(
+            raw_params=pred_states.detach(),
+            weights=weights.detach(),
+        )
+
+        return loss
 
     # --------------------------------------------------------
     # Helpers
