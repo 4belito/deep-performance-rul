@@ -139,7 +139,7 @@ class MixtureDegModel(StochasticProcessModel):
     def quantile_mc(
         self,
         s: torch.Tensor,  # [B]
-        q: float,
+        q: float | list[float],
         n_samples: int = 4096,
     ) -> torch.Tensor:
         """
@@ -161,4 +161,16 @@ class MixtureDegModel(StochasticProcessModel):
         """
         dist_s = self.distribution(s)  # MixtureSameFamily
         samples = dist_s.sample((n_samples,))  # [N, B]
-        return torch.quantile(samples, q, dim=0)
+        q_torch = torch.tensor(q, device=s.device)
+        return torch.quantile(samples, q_torch, dim=0)
+
+    @torch.no_grad()
+    def mean(self, s: torch.Tensor) -> torch.Tensor:
+        """
+        Exact predictive mean.
+        """
+        return self.distribution(s).mean
+
+    @torch.no_grad()
+    def variance(self, s: torch.Tensor) -> torch.Tensor:
+        return self.distribution(s).variance

@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -167,7 +169,7 @@ class ParticleFilterModel(nn.Module):
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1))  # [B, K]
 
         # aggregate over batch (system-level obs)
-        log_lik = log_lik.mean(dim=0)  # [K]
+        log_lik, _ = log_lik.mean(dim=0)  # [K]
 
         # Bayesian update
         log_w = torch.log(self.mixture.weights + 1e-12) + log_lik
@@ -245,3 +247,52 @@ class ParticleFilterModel(nn.Module):
             weights=weights,
             onsets=onsets,
         )
+
+    @torch.no_grad()
+    def plot(
+        self,
+        ax: plt.Axes,
+        t_grid: np.ndarray,
+        s_grid: np.ndarray,
+        t_obs: np.ndarray,
+        s_obs: np.ndarray,
+        title: str | None = None,
+        show_legend: bool = True,
+    ) -> plt.Axes:
+        """
+        Plot PF state on a given axis.
+        (Safe to compose with other plots.)
+        """
+
+        # --- Mixture PDF ---
+        self.mixture.plot_distribution(
+            t_grid,
+            s_grid,
+            func="pdf",
+            ax=ax,
+            plot_mean=True,
+        )
+
+        # --- Observations ---
+        ax.plot(
+            t_obs,
+            s_obs,
+            "o-",
+            color="white",
+            alpha=0.8,
+            markersize=4,
+            markeredgecolor="black",
+            markeredgewidth=0.8,
+            label="obs",
+        )
+
+        ax.set_xlim([0, t_grid.max()])
+        ax.set_ylim([0, 1])
+
+        if title is not None:
+            ax.set_title(title)
+
+        if show_legend:
+            ax.legend()
+
+        return ax
