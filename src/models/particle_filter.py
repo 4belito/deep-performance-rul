@@ -40,26 +40,15 @@ class ParticleFilterMLP(nn.Module):
 
 
 class DiagonalMahalanobisNoise(nn.Module):
-    """
-    PF-safe diagonal Mahalanobis roughening.
-    States == raw parameters.
-    """
-
     def __init__(self, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
-        self._sigma: torch.Tensor | None
         self.register_buffer("_sigma", None)
 
     def fit(self, states: torch.Tensor):
-        """
-        Estimate per-parameter scale from particle cloud.
-
-        states: Tensor [N, d]
-        """
         assert states.ndim == 2
-
         sigma = states.std(dim=0).clamp_min(self.eps)
+
         if self._sigma is None:
             self._sigma = sigma
         else:
@@ -140,12 +129,12 @@ class ParticleFilterModel(nn.Module):
         Multinomial resampling.
         """
         n = self.n_particles
-        idx = torch.multinomial(self.mixture.weights, n, replacement=True)
+        idx = torch.multinomial(self.weights, n, replacement=True)
 
         self.mixture.update(
-            raw_params=self.mixture.raw_params[idx],
-            weights=torch.full((n,), 1.0 / n, device=self.mixture.weights.device),
-            onsets=self.mixture.onsets[idx],
+            raw_params=self.states[idx],
+            weights=torch.full((n,), 1.0 / n, device=self.weights.device),
+            onsets=self.onsets[idx],
         )
 
     @torch.no_grad()
@@ -155,12 +144,12 @@ class ParticleFilterModel(nn.Module):
         """
         self.resample()
 
-        new_states = self.noise(self.mixture.raw_params, scale=noise_scale)
+        new_states = self.noise(self.states, scale=noise_scale)
 
         self.mixture.update(raw_params=new_states)
 
     @torch.no_grad()
-    def correction(self, s_obs: torch.Tensor, t_obs: torch.Tensor):
+    def correction(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
         """
         Particle-wise measurement update (matches old GMP logic).
 
@@ -187,14 +176,13 @@ class ParticleFilterModel(nn.Module):
         self.mixture.update(weights=new_weights)
 
     @torch.no_grad()
-    def step(self, s_obs: torch.Tensor, y_obs: torch.Tensor, noise_scale):
+    def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor, noise_scale: float):
         self.prediction(noise_scale)
-        self.correction(s_obs, y_obs)
+        self.correction(t_obs, s_obs)
 
     # --------------------------------------------------------
     # Helpers
     # --------------------------------------------------------
-
     @property
     def deg_class(self) -> type[DegModel]:
         return self.mixture.deg_class
@@ -214,6 +202,10 @@ class ParticleFilterModel(nn.Module):
     @property
     def weights(self) -> torch.Tensor:
         return self.mixture.weights
+
+    @property
+    def onsets(self) -> torch.Tensor:
+        return self.mixture.onsets
 
     @staticmethod
     def _extract_parameters(base_models: list[DegModel]):
