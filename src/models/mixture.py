@@ -174,3 +174,13 @@ class MixtureDegModel(StochasticProcessModel):
     @torch.no_grad()
     def variance(self, s: torch.Tensor) -> torch.Tensor:
         return self.distribution(s).variance
+
+    def rul_nll(self, eol: torch.Tensor):
+        eol_dist = self.distribution(s=torch.tensor([0.0]))
+        nll = -eol_dist.log_prob(eol.unsqueeze(0)).mean()
+        return nll
+
+    def rul_mse(self, eol: torch.Tensor):
+        eol_dist = self.distribution(s=torch.tensor([0.0]))
+        mse = ((eol_dist.mean - eol.unsqueeze(0)) ** 2).mean()
+        return mse

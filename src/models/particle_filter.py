@@ -1,8 +1,8 @@
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from src.models.degradation import DegModel
 from src.models.mixture import MixtureDegModel
@@ -13,27 +13,116 @@ from src.models.mixture import MixtureDegModel
 
 
 class ParticleFilterMLP(nn.Module):
-    def __init__(self, layer_dims):
+    def __init__(self, state_dim: int, hidden_dims=(128, 128, 32)):
         super().__init__()
-        self.layer_dims = layer_dims
-        self.n_layers = len(layer_dims) - 1
+
+        self.state_dim = state_dim
+        output_dim = state_dim + 1  # noise vector + correction scalar
 
         layers = []
-        for i in range(self.n_layers - 1):
-            layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
+        dims = (2, *hidden_dims, output_dim)
+        for i in range(len(dims) - 2):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(nn.ReLU())
-        layers.append(nn.Linear(layer_dims[-2], layer_dims[-1]))
+        layers.append(nn.Linear(dims[-2], dims[-1]))
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
-        return F.softplus(self.net(x))
+        self.apply(self._init_identity)
 
-    def tuple_forward(self, x):
-        out = self.forward(x)
-        noise_scale = out[..., :-1]
-        correct_scale = out[..., -1]
-        return noise_scale, correct_scale
+    def _init_identity(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, mean=0.0, std=1e-3)
+            nn.init.constant_(m.bias, 0.0)
+
+    def tuple_logforward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        """
+        Returns:
+            log_noise_vec : [B, state_dim]
+            log_correct   : [B]
+        """
+        x = torch.cat([t_obs.unsqueeze(-1), s_obs.unsqueeze(-1)], dim=-1)
+        out = self.net(x)
+
+        log_noise_vec = out[..., : self.state_dim]
+        log_correct = out[..., self.state_dim]
+
+        return log_noise_vec, log_correct
+
+    def forward(self, x):
+        return torch.exp(self.net(x))
+
+    @torch.no_grad()
+    def plot_output(
+        self,
+        t: np.ndarray,
+        s: np.ndarray,
+        dim: int,
+        ax: plt.Axes | None = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        gamma: float = 0.5,
+        title: str | None = None,
+    ) -> plt.Axes:
+        """
+        Plot NN output over (t, s).
+
+        Parameters
+        ----------
+        output : {"noise", "correct"}
+            Which NN head to visualize.
+        """
+
+        device = next(self.parameters()).device
+
+        # ---- grid ----
+        T, S = np.meshgrid(t, s)
+        t_torch = torch.tensor(T.flatten(), dtype=torch.float32, device=device)
+        s_torch = torch.tensor(S.flatten(), dtype=torch.float32, device=device)
+
+        x = torch.cat(
+            [t_torch.unsqueeze(-1), s_torch.unsqueeze(-1)],
+            dim=-1,
+        )
+
+        # ---- forward (positive outputs) ----
+        out = self.forward(x)  # exp to ensure positivity
+
+        Z = out[..., dim]
+        label = f"dim: {dim}"
+
+        Z = Z.reshape(S.shape).cpu().numpy()
+
+        # ---- plot ----
+        if ax is None:
+            _, ax = plt.subplots(figsize=(10, 6))
+
+        norm = mcolors.PowerNorm(
+            gamma=gamma,
+            vmin=vmin or np.min(Z),
+            vmax=vmax or np.max(Z),
+        )
+
+        c = ax.pcolormesh(
+            T,
+            S,
+            Z,
+            shading="auto",
+            cmap="viridis",
+            norm=norm,
+        )
+        plt.colorbar(c, ax=ax, label=label)
+
+        ax.set_xlabel("time")
+        ax.set_ylabel("scaled performance")
+        ax.set_xlim([t.min(), t.max()])
+        ax.set_ylim([s.min(), s.max()])
+
+        if title is None:
+            title = f"NN output: {label}"
+        ax.set_title(title)
+
+        return ax
 
 
 # ============================================================
@@ -60,7 +149,7 @@ class DiagonalMahalanobisNoise(nn.Module):
     def forward(
         self,
         states: torch.Tensor,
-        scale: float | torch.Tensor = 1.0,
+        scale: torch.Tensor,
     ) -> torch.Tensor:
         """
         Apply diagonal Mahalanobis roughening.
@@ -71,9 +160,6 @@ class DiagonalMahalanobisNoise(nn.Module):
         assert self._sigma is not None, "Call fit(states) before using noise"
 
         noise = torch.randn_like(states)
-
-        if isinstance(scale, torch.Tensor):
-            scale = scale.view(-1, 1)
 
         return states + noise * self._sigma * scale
 
@@ -91,6 +177,7 @@ class ParticleFilterModel(nn.Module):
     def __init__(
         self,
         base_models: list[DegModel],
+        net: ParticleFilterMLP,
         max_life: float,
         n_particles: int,
         multiply_scale: float = 1e-3,
@@ -101,7 +188,7 @@ class ParticleFilterModel(nn.Module):
         assert len(base_models) > 0, "At least one base model required"
         assert len({type(m) for m in base_models}) == 1, "All base models must be of the same class"
 
-        self.net = ParticleFilterMLP(layer_dims=[2, 32, 32, 16, 2])
+        self.net = net
         self.max_life = max_life
         self.name = name
         self.multiply_scale = float(multiply_scale)
@@ -138,62 +225,61 @@ class ParticleFilterModel(nn.Module):
             onsets=self.onsets[idx],
         )
 
-    def prediction(self, noise_scale: float | torch.Tensor):
+    def predict_states(self, states: torch.Tensor, noise_scale: torch.Tensor):
         """
-        PF prediction: resample + roughening.
+        PURE prediction (no mutation, differentiable).
         """
-        new_states = self.noise(self.states, scale=noise_scale)
+        return self.noise(states, scale=noise_scale)
 
-        self.mixture.update(raw_params=new_states)
-
-    def correction(self, t_obs: torch.Tensor, s_obs: torch.Tensor, correct_scale: torch.Tensor):
+    def compute_weights(
+        self,
+        states: torch.Tensor,
+        t_obs: torch.Tensor,
+        s_obs: torch.Tensor,
+        correct_scale: torch.Tensor,
+    ):
         """
-        Particle-wise measurement update.
-
-        s_obs : [B]
-        t_obs : [B]
+        PURE correction (no mutation, differentiable).
         """
-
-        # params: [B, K, DP]
-        params = self.mixture.forward(s_obs)
-
-        # component distributions (NO mixture)
-        comp_dist = self.deg_class.build_distribution_from_params(params)
-
-        # log-likelihoods per particle
-        log_lik = comp_dist.log_prob(t_obs.unsqueeze(1))  # [B, K]
-
-        # aggregate over batch (system-level obs)
-        log_lik = log_lik.mean(dim=0)  # [K]
-
-        # Bayesian update
-        log_w = correct_scale * log_lik  # torch.log(self.mixture.weights + 1e-12) + log_lik
-        new_weights = torch.softmax(log_w, dim=0)
-
-        self.mixture.update(weights=new_weights)
-
-    def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor, eol: torch.Tensor):
-        # 1. NN controls
-        x = torch.cat([t_obs.unsqueeze(-1), s_obs.unsqueeze(-1)], dim=-1)
-        noise_scale, correct_scale = self.net.tuple_forward(x)
-        noise_scale = noise_scale.mean()
-        correct_scale = correct_scale.mean()
-
-        # 2. Resample (DATA)
-        with torch.no_grad():
-            self.resample()
-
-        # 3. Predict (DIFFERENTIABLE)
-        old_states = self.states.detach()
-        pred_states = self.noise(old_states, scale=noise_scale)
-
-        # 4. Temporary belief (NO mutation)
-        params = self.deg_class.forward_with_raw_parameters(s_obs, pred_states)
+        params = self.deg_class.forward_with_raw_parameters(s_obs, states)
         comp_dist = self.deg_class.build_distribution_from_params(params)
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
 
         log_w = correct_scale * log_lik
-        weights = torch.softmax(log_w, dim=0)
+        return torch.softmax(log_w, dim=0)
+
+    def prediction(self, noise_scale):
+        new_states = self.predict_states(self.states, noise_scale)
+        self.mixture.update(raw_params=new_states)
+
+    def correction(self, t_obs, s_obs, correct_scale):
+        weights = self.compute_weights(self.states, t_obs, s_obs, correct_scale)
+        self.mixture.update(weights=weights)
+
+    def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
+        if self.training:
+            return self._step_train(t_obs, s_obs)
+        else:
+            self._step_eval(t_obs, s_obs)
+            return self.mixture
+
+    def _step_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
+        log_noise, log_correct = self.net.tuple_logforward(t_obs, s_obs)
+
+        log_noise = torch.clamp(log_noise.mean(), -5.0, 2.0)
+        log_correct = torch.clamp(log_correct.mean(), -5.0, 2.0)
+
+        noise_scale = torch.exp(log_noise)
+        correct_scale = torch.exp(log_correct)
+
+        # resample (data only)
+        self.resample()
+
+        old_states = self.states.detach()
+
+        # PURE steps
+        pred_states = self.predict_states(old_states, noise_scale)
+        weights = self.compute_weights(pred_states, t_obs, s_obs, correct_scale)
 
         temp_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
@@ -202,17 +288,23 @@ class ParticleFilterModel(nn.Module):
             onsets=self.onsets,
         )
 
-        # 5. Loss on belief
-        eol_dist = temp_mixture.distribution(s=torch.tensor([0.0], device=pred_states.device))
-        loss = -eol_dist.log_prob(eol.unsqueeze(0)).mean()
-
-        # 6. Commit belief (STOP GRAD)
+        # commit belief (NO grad)
         self.mixture.update(
             raw_params=pred_states.detach(),
             weights=weights.detach(),
         )
+        return temp_mixture
 
-        return loss
+    @torch.no_grad()
+    def _step_eval(self, t_obs, s_obs):
+        log_noise, log_correct = self.net.tuple_logforward(t_obs, s_obs)
+
+        noise_scale = torch.exp(torch.clamp(log_noise.mean(), -5.0, 2.0))
+        correct_scale = torch.exp(torch.clamp(log_correct.mean(), -5.0, 2.0))
+
+        self.resample()
+        self.prediction(noise_scale)
+        self.correction(t_obs, s_obs, correct_scale)
 
     # --------------------------------------------------------
     # Helpers
