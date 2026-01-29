@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 
 from src.models.degradation import DegModel
 from src.models.mixture import MixtureDegModel
@@ -49,8 +50,30 @@ class ParticleFilterMLP(nn.Module):
 
         return log_noise_vec, log_correct
 
+    def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        """
+        Returns:
+            noise_vec : [B, state_dim]
+            correct   : [B]
+        """
+        log_noise_vec, log_correct = self.tuple_logforward(t_obs, s_obs)
+        noise_vec = F.softplus(log_noise_vec)
+        correct = F.softplus(log_correct)
+        return noise_vec, correct
+
+    def tuple_forward_mean(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        """
+        Returns:
+            noise_vec : [state_dim]
+            correct   : scalar
+        """
+        log_noise_vec, log_correct = self.tuple_logforward(t_obs, s_obs)
+        noise_vec = F.softplus(log_noise_vec).mean(dim=0)
+        correct = F.softplus(log_correct).mean()
+        return noise_vec, correct
+
     def forward(self, x):
-        return torch.exp(self.net(x))
+        return F.softplus(self.net(x))
 
     @torch.no_grad()
     def plot_output(
@@ -99,8 +122,8 @@ class ParticleFilterMLP(nn.Module):
 
         norm = mcolors.PowerNorm(
             gamma=gamma,
-            vmin=vmin or np.min(Z),
-            vmax=vmax or np.max(Z),
+            vmin=np.min(Z) if vmin is None else vmin,
+            vmax=np.max(Z) if vmax is None else vmax,
         )
 
         c = ax.pcolormesh(
@@ -264,13 +287,7 @@ class ParticleFilterModel(nn.Module):
             return self.mixture
 
     def _step_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
-        log_noise, log_correct = self.net.tuple_logforward(t_obs, s_obs)
-
-        log_noise = torch.clamp(log_noise.mean(), -5.0, 2.0)
-        log_correct = torch.clamp(log_correct.mean(), -5.0, 2.0)
-
-        noise_scale = torch.exp(log_noise)
-        correct_scale = torch.exp(log_correct)
+        noise_vec, correct_scale = self.net.tuple_forward_mean(t_obs, s_obs)
 
         # resample (data only)
         self.resample()
@@ -278,7 +295,7 @@ class ParticleFilterModel(nn.Module):
         old_states = self.states.detach()
 
         # PURE steps
-        pred_states = self.predict_states(old_states, noise_scale)
+        pred_states = self.predict_states(old_states, noise_vec)
         weights = self.compute_weights(pred_states, t_obs, s_obs, correct_scale)
 
         temp_mixture = MixtureDegModel.from_particles(
@@ -297,13 +314,10 @@ class ParticleFilterModel(nn.Module):
 
     @torch.no_grad()
     def _step_eval(self, t_obs, s_obs):
-        log_noise, log_correct = self.net.tuple_logforward(t_obs, s_obs)
-
-        noise_scale = torch.exp(torch.clamp(log_noise.mean(), -5.0, 2.0))
-        correct_scale = torch.exp(torch.clamp(log_correct.mean(), -5.0, 2.0))
+        noise_vec, correct_scale = self.net.tuple_forward_mean(t_obs, s_obs)
 
         self.resample()
-        self.prediction(noise_scale)
+        self.prediction(noise_vec)
         self.correction(t_obs, s_obs, correct_scale)
 
     # --------------------------------------------------------
