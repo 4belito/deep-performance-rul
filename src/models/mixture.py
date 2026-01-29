@@ -20,15 +20,15 @@ class MixtureDegModel(StochasticProcessModel):
         assert weights.ndim == 1
         assert len(components) == len(weights)
 
-        raw_params = torch.stack(
-            [c.get_raw_param_vector() for c in components],
+        states = torch.stack(
+            [c.get_state_vector() for c in components],
             dim=0,
         )
         onsets = torch.tensor([c.get_onset() for c in components])
 
         self._init_from_tensors(
             deg_class=type(components[0]),
-            raw_params=raw_params,
+            states=states,
             weights=weights,
             onsets=onsets,
         )
@@ -36,20 +36,19 @@ class MixtureDegModel(StochasticProcessModel):
     def _init_from_tensors(
         self,
         deg_class: type[DegModel],
-        raw_params: torch.Tensor,  # [K, RP]
+        states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
     ):
-        assert raw_params.ndim == 2
+        assert states.ndim == 2
         assert weights.ndim == 1
-        assert raw_params.shape[0] == weights.shape[0]
+        assert states.shape[0] == weights.shape[0]
 
-        self.K, self.RP = raw_params.shape
         self.deg_class = deg_class
-        self.raw_params: torch.Tensor
+        self.states: torch.Tensor
         self.weights: torch.Tensor
         self.onsets: torch.Tensor
-        self.register_buffer("raw_params", raw_params)
+        self.register_buffer("states", states)
         self.register_buffer(
             "weights",
             weights / weights.sum().clamp_min(1e-12),
@@ -62,7 +61,7 @@ class MixtureDegModel(StochasticProcessModel):
     def from_particles(
         cls,
         deg_class: type[DegModel],
-        raw_params: torch.Tensor,  # [K, RP]
+        states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
     ) -> MixtureDegModel:
@@ -74,7 +73,7 @@ class MixtureDegModel(StochasticProcessModel):
 
         obj._init_from_tensors(
             deg_class=deg_class,
-            raw_params=raw_params,
+            states=states,
             weights=weights,
             onsets=onsets,
         )
@@ -92,7 +91,7 @@ class MixtureDegModel(StochasticProcessModel):
         params : torch.Tensor
             Shape [B, K, DP]   (batch, component, distribution params)
         """
-        return self.deg_class.forward_with_raw_parameters(s, self.raw_params)
+        return self.deg_class.forward_with_stateeters(s, self.states)
 
     def build_mixture_distribution(self, params: torch.Tensor) -> dist.Distribution:
         """
@@ -108,8 +107,8 @@ class MixtureDegModel(StochasticProcessModel):
 
         return dist.MixtureSameFamily(mixture, components_dist)
 
-    def get_raw_params(self) -> torch.Tensor:
-        return self.raw_params
+    def get_states(self) -> torch.Tensor:
+        return self.states
 
     def get_weights(self) -> torch.Tensor:
         return self.weights
@@ -120,12 +119,12 @@ class MixtureDegModel(StochasticProcessModel):
     @torch.no_grad()
     def update(
         self,
-        raw_params: torch.Tensor | None = None,
+        states: torch.Tensor | None = None,
         weights: torch.Tensor | None = None,
         onsets: torch.Tensor | None = None,
     ):
-        if raw_params is not None:
-            self.raw_params.copy_(raw_params)
+        if states is not None:
+            self.states.copy_(states)
         if weights is not None:
             self.weights.copy_(weights)
             self.weights /= self.weights.sum().clamp_min(1e-12)

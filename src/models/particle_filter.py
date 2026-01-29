@@ -243,7 +243,7 @@ class ParticleFilterModel(nn.Module):
         idx = torch.multinomial(self.weights, n, replacement=True)
 
         self.mixture.update(
-            raw_params=self.states[idx],
+            states=self.states[idx],
             weights=torch.full((n,), 1.0 / n, device=self.weights.device),
             onsets=self.onsets[idx],
         )
@@ -264,7 +264,7 @@ class ParticleFilterModel(nn.Module):
         """
         PURE correction (no mutation, differentiable).
         """
-        params = self.deg_class.forward_with_raw_parameters(s_obs, states)
+        params = self.deg_class.forward_with_stateeters(s_obs, states)
         comp_dist = self.deg_class.build_distribution_from_params(params)
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
 
@@ -273,7 +273,7 @@ class ParticleFilterModel(nn.Module):
 
     def prediction(self, noise_scale):
         new_states = self.predict_states(self.states, noise_scale)
-        self.mixture.update(raw_params=new_states)
+        self.mixture.update(states=new_states)
 
     def correction(self, t_obs, s_obs, correct_scale):
         weights = self.compute_weights(self.states, t_obs, s_obs, correct_scale)
@@ -300,14 +300,14 @@ class ParticleFilterModel(nn.Module):
 
         temp_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
-            raw_params=pred_states,
+            states=pred_states,
             weights=weights,
             onsets=self.onsets,
         )
 
         # commit belief (NO grad)
         self.mixture.update(
-            raw_params=pred_states.detach(),
+            states=pred_states.detach(),
             weights=weights.detach(),
         )
         return temp_mixture
@@ -337,7 +337,7 @@ class ParticleFilterModel(nn.Module):
 
     @property
     def states(self) -> torch.Tensor:
-        return self.mixture.raw_params
+        return self.mixture.states
 
     @property
     def weights(self) -> torch.Tensor:
@@ -352,7 +352,7 @@ class ParticleFilterModel(nn.Module):
         states = []
         onsets = []
         for m in base_models:
-            states.append(m.get_raw_param_vector())
+            states.append(m.get_state_vector())
             onsets.append(m.get_onset())
         return torch.stack(states, dim=0), torch.tensor(onsets)
 
@@ -381,7 +381,7 @@ class ParticleFilterModel(nn.Module):
         # --- mixture is the SINGLE source of truth ---
         return MixtureDegModel.from_particles(
             deg_class=deg_class,
-            raw_params=states,
+            states=states,
             weights=weights,
             onsets=onsets,
         )

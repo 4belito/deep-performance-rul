@@ -18,22 +18,12 @@ class DegModel(StochasticProcessModel, abc.ABC):
         self.register_buffer("onset", torch.tensor(float(onset)))
 
     # ---------- REQUIRED API ----------
+    @classmethod
     @abc.abstractmethod
-    def get_raw_param_vector(self) -> torch.Tensor:
+    def get_state_names(cls) -> list[str]:
         """
-        Return the raw parameter vector.
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def set_raw_param_vector(self, raw_params: torch.Tensor) -> None:
-        """
-        Set the raw parameter vector from an external estimator.
-
-        Parameters
-        ----------
-        raw_params : torch.Tensor
-            Tensor of shape [RP]
+        Names of nn.Parameter attributes that define the raw parameter vector.
+        Order matters.
         """
         raise NotImplementedError
 
@@ -45,28 +35,43 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def forward_with_raw_parameters(
+    def forward_with_stateeters(
         s: torch.Tensor,
-        raw_params: torch.Tensor,  # [..., RP]
+        states: torch.Tensor,  # [..., RP]
     ) -> torch.Tensor:
         """
         s: Tensor of shape [B]
-        raw_params: Tensor of shape [K, RP]
+        states: Tensor of shape [K, RP]
         returns: Tensor of shape [B, K, DP]
         """
         raise NotImplementedError
 
     # ---------- GENERIC METHODS ----------
+    @classmethod
+    def states_dim(cls) -> int:
+        return len(cls.get_state_names())
+
     def get_onset(self) -> float:
         return float(self.onset)
+
+    def get_state_vector(self) -> torch.Tensor:
+        return torch.stack([getattr(self, name) for name in self.get_state_names()])
+
+    def set_state_vector(self, states: torch.Tensor) -> None:
+        names = self.get_state_names()
+        assert states.shape == (len(names),)
+
+        with torch.no_grad():
+            for name, value in zip(names, states):
+                getattr(self, name).copy_(value)
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
         s: Tensor of shape [B]
         returns: Tensor of shape [B, DP]
         """
-        raw_params = self.get_raw_param_vector().unsqueeze(0)  # [1, RP]
-        output = self.forward_with_raw_parameters(s, raw_params)
+        states = self.get_state_vector().unsqueeze(0)  # [1, RP]
+        output = self.forward_with_stateeters(s, states)
         return output[:, 0, :]  # [B, DP]
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:

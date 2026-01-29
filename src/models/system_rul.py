@@ -110,7 +110,7 @@ class SystemRUL:
 
         for name, pf in self.pf_models.items():
             mixture = pf.mixture
-            device = mixture.raw_params.device
+            device = mixture.states.device
 
             # RUL is evaluated at s = 0
             s0 = torch.tensor([0.0], device=device)

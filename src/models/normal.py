@@ -30,7 +30,7 @@ class NormalDegradationModel(DegModel):
         self.v0_raw = nn.Parameter(inv_softplus(torch.tensor(0.0001)))
         self.v1_raw = nn.Parameter(inv_softplus(torch.tensor(1.0)))
 
-    def get_raw_param_vector(self) -> torch.Tensor:
+    def get_state_vector(self) -> torch.Tensor:
         return torch.stack(
             [
                 self.m0_raw,
@@ -41,23 +41,27 @@ class NormalDegradationModel(DegModel):
             ]
         )
 
-    def set_raw_param_vector(self, raw_params: torch.Tensor) -> None:
+    @classmethod
+    def get_state_names(self) -> list[str]:
+        return ["m0_raw", "m1_raw", "p_raw", "v0_raw", "v1_raw"]
+
+    def set_state_vector(self, states: torch.Tensor) -> None:
         """
         Set raw parameters from an external estimator.
 
         Parameters
         ----------
-        raw_params : torch.Tensor
+        states : torch.Tensor
             Shape [5] = (m0_raw, m1_raw, p_raw, v0_raw, v1_raw)
         """
-        assert raw_params.shape == (5,), f"Expected shape (5,), got {raw_params.shape}"
+        assert states.shape == (5,), f"Expected shape (5,), got {states.shape}"
 
         with torch.no_grad():
-            self.m0_raw.copy_(raw_params[0])
-            self.m1_raw.copy_(raw_params[1])
-            self.p_raw.copy_(raw_params[2])
-            self.v0_raw.copy_(raw_params[3])
-            self.v1_raw.copy_(raw_params[4])
+            self.m0_raw.copy_(states[0])
+            self.m1_raw.copy_(states[1])
+            self.p_raw.copy_(states[2])
+            self.v0_raw.copy_(states[3])
+            self.v1_raw.copy_(states[4])
 
     def tuple_forward(self, s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -70,17 +74,17 @@ class NormalDegradationModel(DegModel):
         return mean, var
 
     @staticmethod
-    def forward_with_raw_parameters(
+    def forward_with_stateeters(
         s: torch.Tensor,  # [B]
-        raw_params: torch.Tensor,  # [K, RP]
+        states: torch.Tensor,  # [K, RP]
     ) -> torch.Tensor:
         """
         s: Tensor of shape [B]
-        raw_params: Tensor of shape [K, RP] RP = 5
+        states: Tensor of shape [K, RP] RP = 5
         returns: Tensor of shape [B, K, DP] RP = 2
         """
         # unpack raw params
-        m0_raw, m1_raw, p_raw, v0_raw, v1_raw = raw_params.unbind(-1)
+        m0_raw, m1_raw, p_raw, v0_raw, v1_raw = states.unbind(-1)
 
         # constrain
         m0 = torch.sigmoid(m0_raw)  # [K]
