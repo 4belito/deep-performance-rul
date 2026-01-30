@@ -12,15 +12,15 @@ class DegModel(StochasticProcessModel, abc.ABC):
     Abstract base class for degradation models.
     """
 
-    def __init__(self, onset: float = 0.0):
+    def __init__(self, onset):
         super().__init__()
         self.onset: float
         self.register_buffer("onset", torch.tensor(float(onset)))
 
     # ---------- REQUIRED API ----------
-    @classmethod
+    @staticmethod
     @abc.abstractmethod
-    def get_state_names(cls) -> list[str]:
+    def get_state_names() -> list[str]:
         """
         Names of nn.Parameter attributes that define the raw parameter vector.
         Order matters.
@@ -35,9 +35,10 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def forward_with_stateeters(
+    def forward_with_states(
         s: torch.Tensor,
         states: torch.Tensor,  # [..., RP]
+        onsets: torch.Tensor,  # [..., 1]
     ) -> torch.Tensor:
         """
         s: Tensor of shape [B]
@@ -48,7 +49,7 @@ class DegModel(StochasticProcessModel, abc.ABC):
 
     # ---------- GENERIC METHODS ----------
     @classmethod
-    def states_dim(cls) -> int:
+    def state_dim(cls) -> int:
         return len(cls.get_state_names())
 
     def get_onset(self) -> float:
@@ -71,11 +72,13 @@ class DegModel(StochasticProcessModel, abc.ABC):
         returns: Tensor of shape [B, DP]
         """
         states = self.get_state_vector().unsqueeze(0)  # [1, RP]
-        output = self.forward_with_stateeters(s, states)
+        onsets = torch.tensor([[self.onset]])  # [1, 1]
+        output = self.forward_with_states(s, states, onsets)  # [B, 1, DP]
         return output[:, 0, :]  # [B, DP]
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
-        return self.build_distribution_from_params(self.forward(s))
+        params_s = self.forward(s.unsqueeze(1))  # [B, DP]
+        return self.build_distribution_from_params(params_s)
 
     def _post_plot(self, ax: plt.Axes):
         onset = self.onset

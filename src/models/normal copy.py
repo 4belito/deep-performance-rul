@@ -11,8 +11,8 @@ from src.models.degradation import DegModel
 
 class NormalDegradationNLL(nn.Module):
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
-        mean_Ts = y_pred[:, [0]]
-        var_Ts = y_pred[:, [1]]
+        mean_Ts = y_pred[..., 0]
+        var_Ts = y_pred[..., 1]
         std = torch.sqrt(var_Ts.clamp_min(1e-6))
         dist_s = dist.Normal(mean_Ts, std)
         loss = -(dist_s.log_prob(y_true)).mean()
@@ -52,18 +52,18 @@ class NormalDegradationModel(DegModel):
     @staticmethod
     def forward_with_states(
         s: torch.Tensor,  # [B,1]
-        states: torch.Tensor,  # [K, RP]
+        states: torch.Tensor,  # [K, S]
         onsets: torch.Tensor,  # [K, 1]
     ) -> torch.Tensor:
         """
-        s: Tensor of shape [B]
+        s: Tensor of shape [B,1]
         states: Tensor of shape [K, RP]
         returns: Tensor of shape [B, K, 2]
         """
         # --------------------------------------------------
         # unpack raw params
         # --------------------------------------------------
-        m0_raw, m1_raw, mp_raw, v0_raw, v1_raw, mn_raw = (x.unsqueeze(0) for x in states.unbind(-1))
+        m0_raw, m1_raw, mp_raw, v0_raw, v1_raw, mn_raw = [x.unsqueeze(0) for x in states.unbind(-1)]
 
         # --------------------------------------------------
         # constrain
@@ -73,14 +73,13 @@ class NormalDegradationModel(DegModel):
         mp = F.softplus(mp_raw)  # [1,K]
         v0 = F.softplus(v0_raw)  # [1,K]
         v1 = F.softplus(v1_raw)  # [1,K]
-        mn = torch.sigmoid(mn_raw)  # [1,K]
+        mn = torch.sigmoid(mn_raw)  # [K]
 
+        t_onsets = torch.tensor(onsets.view(1, -1).item())  # [1, K]
         # --------------------------------------------------
         # onset (guarded)
         # --------------------------------------------------
-
-        t_onset = onsets.view(1, -1)
-        ratio = torch.clamp(t_onset / m1, max=1.0 - 1e-6)
+        ratio = torch.clamp(t_onsets / m1, max=1.0 - 1e-6)
         s_onset = m0 * (1.0 - ratio.pow(1.0 / mp))  # [1, K]
 
         # --------------------------------------------------
@@ -88,7 +87,8 @@ class NormalDegradationModel(DegModel):
         # --------------------------------------------------
         B = s.shape[0]
         K = states.shape[0]
-        mean = torch.zeros(B, K, device=s.device)
+        s = s.expand(B, K).unsqueeze(1)  # [B, 1]
+        mean = torch.zeros_like(s)
         var = 0.25 + (v0 + v1 * s).pow(2)
 
         # --------------------------------------------------
@@ -113,9 +113,7 @@ class NormalDegradationModel(DegModel):
                 mn.expand_as(mean)[mask_nom] - s_onset.expand_as(mean)[mask_nom], min=1e-6
             )
             mean[mask_nom] = (
-                t_onset.expand_as(mean)[mask_nom]
-                * (mn.expand_as(mean)[mask_nom] - s.expand_as(mean)[mask_nom])
-                / den
+                t_onsets * (mn.expand_as(mean)[mask_nom] - s.expand_as(mean)[mask_nom]) / den
             )
         # --------------------------------------------------
         return torch.stack([mean, var], dim=-1)

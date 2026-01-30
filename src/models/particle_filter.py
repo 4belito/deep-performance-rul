@@ -264,7 +264,9 @@ class ParticleFilterModel(nn.Module):
         """
         PURE correction (no mutation, differentiable).
         """
-        params = self.deg_class.forward_with_stateeters(s_obs, states)
+        params = self.deg_class.forward_with_states(
+            s_obs.unsqueeze(1), states, self.onsets.unsqueeze(1)
+        )
         comp_dist = self.deg_class.build_distribution_from_params(params)
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
 
@@ -329,11 +331,11 @@ class ParticleFilterModel(nn.Module):
 
     @property
     def n_particles(self) -> int:
-        return self.mixture.K
+        return self.mixture.n_components
 
     @property
     def state_dim(self) -> int:
-        return self.mixture.RP
+        return self.mixture.state_dim
 
     @property
     def states(self) -> torch.Tensor:

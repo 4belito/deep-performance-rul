@@ -9,25 +9,26 @@ import torch.distributions as dist
 import torch.nn as nn
 
 
-class StochasticProcessModel(nn.Module,abc.ABC):
+class StochasticProcessModel(nn.Module, abc.ABC):
     """
     Generic plotting utilities for objects that implement:
 
         distribution(s: torch.Tensor) -> torch.distributions.Distribution
     """
-    uncertainty_color= 'orange' 
-    mean_color = "blue" 
+
+    uncertainty_color = "orange"
+    mean_color = "blue"
     mode_color = "cyan"
-    bound_color = 'black'
-    
+    bound_color = "black"
+
     # --------- REQUIRED API ----------
     @abc.abstractmethod
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
-        """ Distribution at scaled performance s. """
+        """Distribution at scaled performance s."""
         raise NotImplementedError
 
     # --------- GENERIC METHODS ----------
-    
+
     @torch.no_grad()
     def quantile_mc(
         self,
@@ -36,7 +37,7 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         n_samples: int = 4096,
     ) -> torch.Tensor:
         assert 0.0 < q < 1.0, "q must be in (0, 1)"
-        
+
         dist_s = self.distribution(s)
         samples = dist_s.sample((n_samples,))
         return torch.quantile(samples, q, dim=0)
@@ -49,14 +50,13 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         n_samples: int = 4096,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert 0.0 < level < 1.0, "level must be in (0, 1)"
-        
+
         alpha = 1.0 - level
         lower = self.quantile_mc(s, alpha / 2, n_samples)
         upper = self.quantile_mc(s, 1 - alpha / 2, n_samples)
-        mean  = self.distribution(s).mean
+        mean = self.distribution(s).mean
         return lower, mean, upper
-    
-    
+
     def _device(self) -> torch.device:
         for p in self.parameters():
             return p.device
@@ -100,10 +100,8 @@ class StochasticProcessModel(nn.Module,abc.ABC):
             if plot_mean or plot_mode:
                 s_line = torch.tensor(s, dtype=torch.float32, device=device)
                 dist_Ts_line = self.distribution(s_line)
-                
 
         Z = Z.reshape(S.shape).cpu().numpy()
-            
 
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 6))
@@ -122,7 +120,7 @@ class StochasticProcessModel(nn.Module,abc.ABC):
             mean_Ts = mean_Ts.cpu().numpy()
             ax.plot(mean_Ts, s, color=self.mean_color, lw=2, label="mean")
             ax.legend()
-            
+
         if plot_mode:
             mode_Ts = dist_Ts_line.mode
             mode_Ts = mode_Ts.cpu().numpy()
@@ -130,19 +128,18 @@ class StochasticProcessModel(nn.Module,abc.ABC):
             ax.legend()
 
         self._post_plot(ax)
-        
+
         ax.set_title(title)
         ax.set_xlabel("time")
         ax.set_ylabel("scaled performance")
         ax.set_xlim([0, t.max()])
         return ax
-    
+
     # --- hook (extension point) ---
     def _post_plot(self, ax: plt.Axes):
         """Hook for subclasses to add extra plot elements."""
         pass
-    
-    
+
     def plot_uncertainty_band(
         self,
         s: np.ndarray,
@@ -159,12 +156,10 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         device = self._device()
         s_torch = torch.tensor(s, dtype=torch.float32, device=device)
 
-        lower, mean, upper = self.uncertainty_interval(
-            s_torch, level=level, n_samples=n_samples
-        )
+        lower, mean, upper = self.uncertainty_interval(s_torch, level=level, n_samples=n_samples)
 
         lower = lower.cpu().numpy()
-        mean  = mean.cpu().numpy()
+        mean = mean.cpu().numpy()
         upper = upper.cpu().numpy()
 
         if ax is None:
@@ -267,13 +262,13 @@ class StochasticProcessModel(nn.Module,abc.ABC):
                 s_torch, level=level, n_samples=n_samples
             )
             self._plot_uncertainty_interval(
-                    ax=ax,
-                    lower=lower.item(),
-                    mean=mean.item(),
-                    upper=upper.item(),
-                    ymax=max_prob,
-                    label=f"{int(level * 100)}% uncertainty",
-                )
+                ax=ax,
+                lower=lower.item(),
+                mean=mean.item(),
+                upper=upper.item(),
+                ymax=max_prob,
+                label=f"{int(level * 100)}% uncertainty",
+            )
 
         # --- axes & labels ---
         ax.set_xlabel("t")
@@ -283,7 +278,7 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         ax.legend()
 
         return ax
-    
+
     def _plot_uncertainty_interval(
         self,
         ax: plt.Axes,
@@ -316,9 +311,9 @@ class StochasticProcessModel(nn.Module,abc.ABC):
         ax.add_patch(rect)
 
         # mean
-        ax.vlines(mean, ymin=h_interval, ymax=h_mean,
-                color=self.mean_color, linewidth=2, label="mean")
+        ax.vlines(
+            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label="mean"
+        )
 
         # bounds
-        ax.vlines([lower, upper], ymin=0, ymax=h_bounds,
-                color=self.bound_color, linewidth=2)
+        ax.vlines([lower, upper], ymin=0, ymax=h_bounds, color=self.bound_color, linewidth=2)

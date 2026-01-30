@@ -44,6 +44,7 @@ class MixtureDegModel(StochasticProcessModel):
         assert weights.ndim == 1
         assert states.shape[0] == weights.shape[0]
 
+        self.n_components, self.state_dim = states.shape
         self.deg_class = deg_class
         self.states: torch.Tensor
         self.weights: torch.Tensor
@@ -53,9 +54,7 @@ class MixtureDegModel(StochasticProcessModel):
             "weights",
             weights / weights.sum().clamp_min(1e-12),
         )
-
-        if onsets is not None:
-            self.register_buffer("onsets", onsets)
+        self.register_buffer("onsets", onsets)
 
     @classmethod
     def from_particles(
@@ -63,7 +62,7 @@ class MixtureDegModel(StochasticProcessModel):
         deg_class: type[DegModel],
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
-        onsets: torch.Tensor | None = None,
+        onsets: torch.Tensor,
     ) -> MixtureDegModel:
         """
         Build a mixture directly from particle tensors (PF-friendly).
@@ -80,7 +79,8 @@ class MixtureDegModel(StochasticProcessModel):
         return obj
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
-        return self.build_mixture_distribution(self.forward(s))
+        params_s = self.forward(s.unsqueeze(1))  # [B, S]
+        return self.build_mixture_distribution(params_s)
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
@@ -91,7 +91,8 @@ class MixtureDegModel(StochasticProcessModel):
         params : torch.Tensor
             Shape [B, K, DP]   (batch, component, distribution params)
         """
-        return self.deg_class.forward_with_stateeters(s, self.states)
+        onsets = self.onsets.unsqueeze(1)  # [K,1]
+        return self.deg_class.forward_with_states(s, self.states, onsets)
 
     def build_mixture_distribution(self, params: torch.Tensor) -> dist.Distribution:
         """
