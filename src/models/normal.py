@@ -76,9 +76,8 @@ class NormalDegradationModel(DegModel):
         mn = torch.sigmoid(mn_raw)  # [1,K]
 
         # --------------------------------------------------
-        # onset (guarded)
+        # compute s_onset
         # --------------------------------------------------
-
         t_onset = onsets.view(1, -1)
         ratio = torch.clamp(t_onset / m1, max=1.0 - 1e-6)
         s_onset = m0 * (1.0 - ratio.pow(1.0 / mp))  # [1, K]
@@ -89,35 +88,35 @@ class NormalDegradationModel(DegModel):
         B = s.shape[0]
         K = states.shape[0]
         mean = torch.zeros(B, K, device=s.device)
-        var = 0.25 + (v0 + v1 * s).pow(2)
-
         # --------------------------------------------------
         # masks
         # --------------------------------------------------
         mask_nom = s > s_onset
         mask_deg = ~mask_nom
 
-        # --------------------------------------------------
-        # degradation branch (s <= s_onset)
-        # --------------------------------------------------
-        if mask_deg.any():
-            mean[mask_deg] = m1.expand_as(mean)[mask_deg] * torch.clamp(
-                1.0 - s.expand_as(mean)[mask_deg] / m0.expand_as(mean)[mask_deg], min=0.0
-            ).pow(mp.expand_as(mean)[mask_deg])
-
-        # --------------------------------------------------
-        # nominal branch (s > s_onset)
-        # --------------------------------------------------
+        # ==================================================
+        # Nominal branch: s > s_onset
+        # ==================================================
         if mask_nom.any():
-            den = torch.clamp(
-                mn.expand_as(mean)[mask_nom] - s_onset.expand_as(mean)[mask_nom], min=1e-6
-            )
-            mean[mask_nom] = (
-                t_onset.expand_as(mean)[mask_nom]
-                * (mn.expand_as(mean)[mask_nom] - s.expand_as(mean)[mask_nom])
-                / den
-            )
-        # --------------------------------------------------
+            s_nom = s[mask_nom]
+            s_on_nom = s_onset.expand_as(mean)[mask_nom]
+            mn_nom = mn.expand_as(mean)[mask_nom]
+            t_on_nom = t_onset.expand_as(mean)[mask_nom]
+
+            den = torch.clamp(mn_nom - s_on_nom, min=1e-6)
+            mean[mask_nom] = t_on_nom * (mn_nom - s_nom) / den
+
+        # ==================================================
+        # Degradation branch: s <= s_onset
+        # ==================================================
+        if mask_deg.any():
+            s_deg = s[mask_deg]
+            m0_deg = m0.expand_as(mean)[mask_deg]
+            m1_deg = m1.expand_as(mean)[mask_deg]
+            mp_deg = mp.expand_as(mean)[mask_deg]
+
+            mean[mask_deg] = m1_deg * torch.clamp(1.0 - s_deg / m0_deg, min=0.0).pow(mp_deg)
+        var = 0.25 + (v0 + v1 * s).pow(2)
         return torch.stack([mean, var], dim=-1)
 
     # ------------------------------------------------------------------
