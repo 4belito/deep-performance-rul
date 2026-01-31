@@ -78,6 +78,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         title: str = "Distribution of $T_s$",
         plot_mean: bool = False,
         plot_mode: bool = False,
+        legend_loc: str | None = "upper right",
     ) -> plt.Axes:
 
         device = self._device()
@@ -118,7 +119,9 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         if plot_mean:
             mean_Ts = dist_Ts_line.mean
             mean_Ts = mean_Ts.cpu().numpy()
-            ax.plot(mean_Ts, s, color=self.mean_color, lw=2, label="mean")
+            ax.plot(
+                mean_Ts, s, color=self.mean_color, lw=1.5, linestyle="--", label="mean", alpha=0.8
+            )
             ax.legend()
 
         if plot_mode:
@@ -133,6 +136,13 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.set_xlabel("time")
         ax.set_ylabel("scaled performance")
         ax.set_xlim([0, t.max()])
+        ax.set_ylim([0, 1])
+        if legend_loc:
+            ax.legend(
+                loc=legend_loc,  # fixed → no search
+                frameon=True,
+                framealpha=0.9,
+            )
         return ax
 
     # --- hook (extension point) ---
@@ -317,3 +327,63 @@ class StochasticProcessModel(nn.Module, abc.ABC):
 
         # bounds
         ax.vlines([lower, upper], ymin=0, ymax=h_bounds, color=self.bound_color, linewidth=2)
+
+    @staticmethod
+    @torch.no_grad()
+    def plot_observations(
+        ax: plt.Axes,
+        t_obs: np.ndarray,
+        s_obs: np.ndarray,
+        current_idx: int = -1,  # just for ploting data
+        legend_loc: str | None = "upper right",
+    ):
+        # --- Observations ---
+        idx = current_idx
+        if idx > 0:
+            ax.plot(
+                t_obs[: idx + 1],
+                s_obs[: idx + 1],
+                "o-",
+                color="white",
+                alpha=0.5,
+                markersize=4,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                label="past obs",
+            )
+
+        # --- Future observations (reference only) ---
+        if idx + 1 < len(t_obs):
+            ax.plot(
+                t_obs[idx + 1 :],
+                s_obs[idx + 1 :],
+                "o-",
+                color="#9E9E9E",
+                alpha=0.5,
+                markersize=4,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                label="future (ref)",
+            )
+
+        # --- Current observation ---
+        if idx >= 0:
+            ax.plot(
+                t_obs[idx],
+                s_obs[idx],
+                "o",
+                color="#FF7F50",  # coral
+                alpha=1.0,
+                markersize=6,
+                markeredgecolor="black",
+                markeredgewidth=1.0,
+                label="current obs",
+            )
+
+        if legend_loc:
+            ax.legend(
+                loc=legend_loc,  # fixed → no search
+                frameon=True,
+                framealpha=0.9,
+            )
+        return ax
