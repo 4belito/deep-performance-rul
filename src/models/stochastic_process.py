@@ -4,6 +4,7 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as NDArray
 import torch
 import torch.distributions as dist
 import torch.nn as nn
@@ -32,25 +33,26 @@ class StochasticProcessModel(nn.Module, abc.ABC):
     @torch.no_grad()
     def quantile_mc(
         self,
-        s: torch.Tensor,
+        s: NDArray,
         q: float,
         n_samples: int = 4096,
     ) -> torch.Tensor:
         assert 0.0 < q < 1.0, "q must be in (0, 1)"
-
-        dist_s = self.distribution(s)
+        s_torch = torch.tensor(s, dtype=torch.float32, device=self._device())
+        dist_s = self.distribution(s_torch)
         samples = dist_s.sample((n_samples,))
         return torch.quantile(samples, q, dim=0)
 
     @torch.no_grad()
     def uncertainty_interval(
         self,
-        s: torch.Tensor,
+        s: NDArray,
         level: float = 0.95,
         n_samples: int = 4096,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert 0.0 < level < 1.0, "level must be in (0, 1)"
 
+        s = torch.tensor(s, dtype=torch.float32, device=self._device())
         alpha = 1.0 - level
         lower = self.quantile_mc(s, alpha / 2, n_samples)
         upper = self.quantile_mc(s, 1 - alpha / 2, n_samples)
@@ -69,8 +71,8 @@ class StochasticProcessModel(nn.Module, abc.ABC):
     # ------------------------------------------------------------------
     def plot_distribution(
         self,
-        t: np.ndarray,
-        s: np.ndarray,
+        t: NDArray,
+        s: NDArray,
         func: str = "pdf",
         ax: plt.Axes | None = None,
         vmax: float | None = None,
@@ -122,13 +124,11 @@ class StochasticProcessModel(nn.Module, abc.ABC):
             ax.plot(
                 mean_Ts, s, color=self.mean_color, lw=1.5, linestyle="--", label="mean", alpha=0.8
             )
-            ax.legend()
 
         if plot_mode:
             mode_Ts = dist_Ts_line.mode
             mode_Ts = mode_Ts.cpu().numpy()
             ax.plot(mode_Ts, s, color=self.mode_color, lw=2, label="mode")
-            ax.legend()
 
         self._post_plot(ax)
 
@@ -152,21 +152,18 @@ class StochasticProcessModel(nn.Module, abc.ABC):
 
     def plot_uncertainty_band(
         self,
-        s: np.ndarray,
+        s: NDArray,
         level: float = 0.95,
         n_samples: int = 4096,
         ax: plt.Axes | None = None,
         alpha: float = 0.5,
         title: str = "Uncertainty interval",
+        legend_loc: str = "upper right",
     ) -> plt.Axes:
         """
         Plot uncertainty interval for the stochastic process over performance values s.
         """
-
-        device = self._device()
-        s_torch = torch.tensor(s, dtype=torch.float32, device=device)
-
-        lower, mean, upper = self.uncertainty_interval(s_torch, level=level, n_samples=n_samples)
+        lower, mean, upper = self.uncertainty_interval(s, level=level, n_samples=n_samples)
 
         lower = lower.cpu().numpy()
         mean = mean.cpu().numpy()
@@ -218,13 +215,13 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.set_xlabel("time")
         ax.set_ylabel("scaled performance")
         ax.set_xlim(left=0)
-        ax.legend()
+        ax.legend(loc=legend_loc)
 
         return ax
 
     def plot_random_variable(
         self,
-        t: np.ndarray,
+        t: NDArray,
         s: float,
         func: str = "pdf",
         level: float = 0,
@@ -269,7 +266,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         # --- uncertainty interval ---
         if level > 0:
             lower, mean, upper = self.uncertainty_interval(
-                s_torch, level=level, n_samples=n_samples
+                s_torch.cpu().numpy(), level=level, n_samples=n_samples
             )
             self._plot_uncertainty_interval(
                 ax=ax,
@@ -286,7 +283,6 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.set_title(title or f"T_s distribution at s = {s}")
         ax.set_ylim(0, max_prob)
         ax.legend()
-
         return ax
 
     def _plot_uncertainty_interval(
@@ -332,8 +328,8 @@ class StochasticProcessModel(nn.Module, abc.ABC):
     @torch.no_grad()
     def plot_observations(
         ax: plt.Axes,
-        t_obs: np.ndarray,
-        s_obs: np.ndarray,
+        t_obs: NDArray,
+        s_obs: NDArray,
         current_idx: int = -1,  # just for ploting data
         legend_loc: str | None = "upper right",
     ):
