@@ -167,12 +167,21 @@ class SystemRUL:
         self.history_time.append(float(current_time))
         self.history_rul.append(torch.stack([lower, mean, upper]).cpu())
 
-    def reset_history(self):
+    def reset(self):
         """
-        Clear stored RUL history.
+        Reset system state, observations, and PFs.
         """
+        # --- reset observation buffers ---
+        self.t_obs.clear()
+        self.s_obs = {name: [] for name in self.pf_models.keys()}
+
+        # --- reset RUL history ---
         self.history_time.clear()
         self.history_rul.clear()
+
+        # --- reset PF internal states ---
+        for pf in self.pf_models.values():
+            pf.reset()
 
     # --------------------------------------------------
     # Plotting (frame-safe)

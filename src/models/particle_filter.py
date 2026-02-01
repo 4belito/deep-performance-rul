@@ -241,6 +241,24 @@ class ParticleFilterModel(nn.Module):
     # Core PF steps
     # --------------------------------------------------------
 
+    @torch.no_grad()
+    def reset(self):
+        """
+        Reset particle filter to its initial prior.
+        """
+        states = self.noise(self.base_states, scale=self.multiply_scale)
+        weights = torch.full(
+            (self.n_particles,),
+            1.0 / self.n_particles,
+            device=states.device,
+        )
+
+        self.mixture.update(
+            states=states,
+            weights=weights,
+            onsets=self.onsets,
+        )
+
     def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
         if self.training:
             return self._step_train(t_obs, s_obs)
