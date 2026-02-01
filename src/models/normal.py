@@ -21,7 +21,7 @@ class NormalDegradationNLL(nn.Module):
 
 class NormalDegradationModel(DegModel):
 
-    def __init__(self, onset: float = 0.0):
+    def __init__(self, onset: float | None = None):
         super().__init__(onset=onset)
 
         # raw (unconstrained) state parameters

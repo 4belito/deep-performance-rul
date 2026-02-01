@@ -1,3 +1,5 @@
+from typing import Callable
+
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,7 +16,12 @@ from src.models.mixture import MixtureDegModel
 
 
 class ParticleFilterMLP(nn.Module):
-    def __init__(self, state_dim: int, hidden_dims=(128, 128, 32)):
+    def __init__(
+        self,
+        state_dim: int,
+        hidden_dims: tuple[int, ...],
+        activation: Callable[[], nn.Module] = lambda: nn.ReLU(),
+    ):
         super().__init__()
 
         self.state_dim = state_dim
@@ -24,7 +31,7 @@ class ParticleFilterMLP(nn.Module):
         dims = (2, *hidden_dims, output_dim)
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.ReLU())
+            layers.append(activation())
         layers.append(nn.Linear(dims[-2], dims[-1]))
 
         self.net = nn.Sequential(*layers)

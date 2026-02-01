@@ -63,10 +63,7 @@ class SystemRUL:
         self.t_obs.append(float(time))
 
     @torch.no_grad()
-    def step(
-        self,
-        noise_scales: dict[str, float | torch.Tensor],
-    ):
+    def step(self):
         """
         Advance all PFs using buffered observations.
         """
@@ -87,7 +84,6 @@ class SystemRUL:
             pf.step(
                 s_obs=s_tensor,
                 t_obs=t_tensor,
-                noise_scale=noise_scales[name],
             )
 
     # --------------------------------------------------

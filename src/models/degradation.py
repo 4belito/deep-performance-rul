@@ -10,12 +10,20 @@ from src.models.stochastic_process import StochasticProcessModel
 class DegModel(StochasticProcessModel, abc.ABC):
     """
     Abstract base class for degradation models.
+
+    onset is a fixed, data-derived attribute.
+    - During training: provided explicitly
+    - During loading: restored from state_dict
     """
 
-    def __init__(self, onset):
+    def __init__(self, onset: float | None = None):
         super().__init__()
         self.onset: float
-        self.register_buffer("onset", torch.tensor(float(onset)))
+        if onset is not None:
+            self.register_buffer("onset", torch.tensor(float(onset)))
+        else:
+            # placeholder, will be overwritten by load_state_dict
+            self.register_buffer("onset", torch.tensor(0.0))
 
     # ---------- REQUIRED API ----------
     @staticmethod
