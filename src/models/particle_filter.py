@@ -43,44 +43,36 @@ class ParticleFilterMLP(nn.Module):
             nn.init.normal_(m.weight, mean=0.0, std=1e-3)
             nn.init.constant_(m.bias, 0.0)
 
-    def tuple_logforward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
-        """
-        Returns:
-            log_noise_vec : [B, state_dim]
-            log_correct   : [B]
-        """
-        x = torch.cat([t_obs.unsqueeze(-1), s_obs.unsqueeze(-1)], dim=-1)
-        out = self.net(x)
-
-        log_noise_vec = out[..., : self.state_dim]
-        log_correct = out[..., self.state_dim :]
-
-        return log_noise_vec, log_correct
-
-    def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
-        """
-        Returns:
-            noise_vec : [B, state_dim]
-            correct   : [B]
-        """
-        log_noise_vec, log_correct = self.tuple_logforward(t_obs, s_obs)
-        noise_vec = F.softplus(log_noise_vec)
-        correct = F.softplus(log_correct)
-        return noise_vec, correct
-
-    def tuple_forward_mean(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
-        """
-        Returns:
-            noise_vec : [state_dim]
-            correct   : scalar
-        """
-        log_noise_vec, log_correct = self.tuple_logforward(t_obs, s_obs)
-        noise_vec = F.softplus(log_noise_vec).mean(dim=0)
-        correct = F.softplus(log_correct).mean(dim=0)
-        return noise_vec, correct
-
     def forward(self, x):
         return F.softplus(self.net(x))
+
+    def tuple_out(self, x: torch.Tensor):
+        noise = x[..., : self.state_dim]
+        correct_prior = x[..., self.state_dim :]
+        # correct_prior = x[..., self.state_dim : -1]
+        # correct_lik = x[..., -1:]
+        return noise, correct_prior  # , correct_lik
+
+    @staticmethod
+    def tuple_in(t_obs: torch.Tensor, s_obs: torch.Tensor):
+        x = torch.cat([t_obs.unsqueeze(-1), s_obs.unsqueeze(-1)], dim=-1)
+        return x
+
+    def tuple_logforward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        x = self.tuple_in(t_obs, s_obs)
+        out = self.net(x)
+        return self.tuple_out(out)
+
+    def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        x = self.tuple_in(t_obs, s_obs)
+        out = self.forward(x)
+        return self.tuple_out(out)
+
+    def tuple_forward_mean(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        x = self.tuple_in(t_obs, s_obs)
+        out = self.forward(x)
+        out_mean = out.mean(dim=0)
+        return self.tuple_out(out_mean)
 
     @torch.no_grad()
     def plot_output(
