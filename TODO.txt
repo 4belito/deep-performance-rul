@@ -1,2 +1,4 @@
 managed max_life in predicitons
 eval model on particle filter pass to net and deg models
+
+eval in avg predictions

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
+from typing import Callable
+
 import numpy as np
+import pandas as pd
 import torch
-from matplotlib import pyplot as plt
 
 from src.models.particle_filter import ParticleFilterModel
-
-# -----------------------------
-# Plot styling (reuse everywhere)
-# -----------------------------
 
 
 class SystemRUL:
@@ -27,6 +25,7 @@ class SystemRUL:
         self,
         pf_models: dict[str, ParticleFilterModel],
         conf_level: float = 0.95,
+        max_life: float = 100.0,
     ):
         """
         Parameters
@@ -153,20 +152,6 @@ class SystemRUL:
             uppers.min(),
         )
 
-    # --------------------------------------------------
-    # History recording
-    # --------------------------------------------------
-
-    @torch.no_grad()
-    def record(self, current_time: float):
-        """
-        Compute and store system-level RUL at current time.
-        """
-        lower, mean, upper = self.system_rul(current_time)
-
-        self.history_time.append(float(current_time))
-        self.history_rul.append(torch.stack([lower, mean, upper]).cpu())
-
     def reset(self):
         """
         Reset system state, observations, and PFs.
@@ -184,69 +169,66 @@ class SystemRUL:
             pf.reset()
 
     # --------------------------------------------------
-    # Plotting (frame-safe)
+    # History recording
     # --------------------------------------------------
 
-    def plot_rul(
-        self,
-        ax: plt.Axes,
-        eol_time: float,
-        y_max: float = 100.0,
-        x_max: float = 100.0,
-        title: str = "System RUL prediction",
-    ) -> plt.Axes:
+    @torch.no_grad()
+    def record(self, current_time: float):
         """
-        Plot system-level RUL evolution.
+        Compute and store system-level RUL at current time.
+        """
+        lower, mean, upper = self.system_rul(current_time)
+
+        self.history_time.append(float(current_time))
+        self.history_rul.append(torch.stack([lower, mean, upper]).cpu())
+
+    @torch.no_grad()
+    def run_system_rul_online(
+        self,
+        data_t: np.ndarray,
+        data_s: dict[str, np.ndarray],
+        start_idx: int,
+        on_step: Callable[[int, SystemRUL], None] | None = None,
+    ) -> pd.DataFrame:
+        """
+        Run online system RUL estimation.
 
         Parameters
         ----------
-        ax : matplotlib axis
-        eol_time : float
-            End-of-life time (ground truth)
-        y_max : float
-            Max y-axis limit
-        title : str
+        on_step : optional callback
+            Called after record() at each step:
+                on_step(k, self)
         """
 
-        if len(self.history_time) == 0:
-            ax.set_title(title + " (no data)")
-            return
+        self.reset()
 
-        # --- elapsed time & predictions ---
+        for k, t_curr in enumerate(data_t):
+            self.observe(
+                time=float(t_curr),
+                observations={name: perf[k] for name, perf in data_s.items()},
+            )
+
+            if k < start_idx:
+                continue
+
+            self.step()
+            self.record(float(t_curr))
+
+            if on_step is not None:
+                on_step(k, self)
+
+        return self.history_to_dataframe()
+
+    def history_to_dataframe(self) -> pd.DataFrame:
         elapsed_time = np.asarray(self.history_time)
-        elapsed_preds = torch.stack(self.history_rul).numpy()
-        lower, mean, upper = elapsed_preds.T
+        preds = torch.stack(self.history_rul).cpu().numpy()
+        lower, mean, upper = preds.T
 
-        # --- true RUL from EOL ---
-        true_rul = np.maximum(eol_time - elapsed_time, 0.0)
-
-        # --- plot true RUL ---
-        ax.plot(
-            elapsed_time,
-            true_rul,
-            "--",
-            color="green",
-            label="true",
+        return pd.DataFrame(
+            {
+                "time": elapsed_time,
+                "lower": lower,
+                "mean": mean,
+                "upper": upper,
+            }
         )
-
-        # --- plot prediction ---
-        ax.plot(elapsed_time, lower, "-", color="black", linewidth=0.5)
-        ax.plot(elapsed_time, upper, "-", color="black", linewidth=0.5)
-        ax.plot(elapsed_time, mean, "-", color=self.MEAN_COLOR, label="pred")
-
-        ax.fill_between(
-            elapsed_time,
-            lower,
-            upper,
-            color=self.UNCERTAINTY_COLOR,
-            alpha=0.5,
-            label="unc",
-        )
-
-        ax.set_title(title)
-        ax.set_xlabel("time")
-        ax.set_ylabel("RUL")
-        ax.set_ylim(0, y_max)
-        ax.set_xlim(0, x_max)
-        ax.legend()
-        return ax

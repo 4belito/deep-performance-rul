@@ -208,7 +208,6 @@ class ParticleFilterModel(nn.Module):
         self,
         base_models: list[DegModel],
         net: ParticleFilterMLP,
-        max_life: float,
         n_particles: int,
         multiply_scale: float = 1e-3,
         name: str = "perform_name",
@@ -219,7 +218,6 @@ class ParticleFilterModel(nn.Module):
         assert len({type(m) for m in base_models}) == 1, "All base models must be of the same class"
 
         self.net = net
-        self.max_life = max_life
         self.name = name
         self.multiply_scale = float(multiply_scale)
 

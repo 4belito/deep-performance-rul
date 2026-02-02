@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from src.models.particle_filter import ParticleFilterModel
 from src.models.system_rul import SystemRUL
@@ -95,10 +96,13 @@ def create_rul_prediciton_frame(
         ax.axis("off")
 
     # --- system RUL ---
-    sys_rul.plot_rul(
+    pred_df = sys_rul.history_to_dataframe()
+    pred_df["true_rul"] = np.maximum(eol_time - pred_df["time"], 0.0)
+    plot_rul_from_dataframe(
         ax=ax_rul,
-        eol_time=eol_time,
+        df=pred_df,
         y_max=100,
+        t_max=eol_time,
         title=f"System RUL – unit {test_unit}",
     )
 
@@ -142,3 +146,46 @@ def make_rul_pf_layout(n_perf: int, n_cols: int = 2):
     ax_pf = [fig.add_subplot(gs[r, c + 1]) for r in range(n_rows) for c in range(n_cols)]
 
     return fig, ax_rul, ax_pf
+
+
+def plot_rul_from_dataframe(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    t_max: float = 100,
+    y_max: float = 100,
+    title: str = "RUL Prediction",
+):
+    ax.plot(
+        df["time"],
+        df["true_rul"],
+        "--",
+        color="green",
+        label="true",
+    )
+
+    ax.plot(
+        df["time"],
+        df["mean"],
+        "-",
+        color="blue",
+        label="pred",
+    )
+
+    ax.plot(df["time"], df["lower"], "-", color="black", linewidth=0.5)
+    ax.plot(df["time"], df["upper"], "-", color="black", linewidth=0.5)
+
+    ax.fill_between(
+        df["time"],
+        df["lower"],
+        df["upper"],
+        color="#FF7F50",
+        alpha=0.4,
+        label="unc",
+    )
+
+    ax.set_title(title)
+    ax.set_xlabel("time")
+    ax.set_ylabel("RUL")
+    ax.set_ylim(0, y_max)
+    ax.set_xlim(0, t_max)
+    ax.legend()
