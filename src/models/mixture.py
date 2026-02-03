@@ -132,38 +132,6 @@ class MixtureDegModel(StochasticProcessModel):
         if onsets is not None:
             self.onsets.copy_(onsets)
 
-    # ---------------------------
-    # Fast Monte-Carlo quantiles
-    # ---------------------------
-    @torch.no_grad()
-    def quantile_mc(
-        self,
-        s: torch.Tensor,  # [B]
-        q: float | list[float],
-        n_samples: int = 4096,
-    ) -> torch.Tensor:
-        """
-        Monte-Carlo estimate of the q-quantile.
-
-        Parameters
-        ----------
-        s : torch.Tensor
-            Performance values, shape [B]
-        q : float
-            Quantile in (0, 1)
-        n_samples : int
-            Number of samples per s [N]
-
-        Returns
-        -------
-        q_s : torch.Tensor
-            Quantiles, shape [B]
-        """
-        dist_s = self.distribution(s)  # MixtureSameFamily
-        samples = dist_s.sample((n_samples,))  # [N, B]
-        q_torch = torch.tensor(q, device=s.device)
-        return torch.quantile(samples, q_torch, dim=0)
-
     @torch.no_grad()
     def mean(self, s: torch.Tensor) -> torch.Tensor:
         """

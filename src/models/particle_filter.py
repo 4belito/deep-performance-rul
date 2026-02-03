@@ -25,7 +25,7 @@ class ParticleFilterMLP(nn.Module):
         super().__init__()
 
         self.state_dim = state_dim
-        output_dim = state_dim + 2  # noise vector + correction vector
+        output_dim = 2 * state_dim + 1  # noise vector + correction vector
 
         layers = []
         dims = (2, *hidden_dims, output_dim)
@@ -48,10 +48,9 @@ class ParticleFilterMLP(nn.Module):
 
     def tuple_out(self, x: torch.Tensor):
         noise = x[..., : self.state_dim]
-        correct_prior = x[..., self.state_dim :]
-        # correct_prior = x[..., self.state_dim : -1]
-        # correct_lik = x[..., -1:]
-        return noise, correct_prior  # , correct_lik
+        correct_prior = x[..., self.state_dim : -1]
+        correct_lik = x[..., -1:]
+        return noise, correct_prior, correct_lik
 
     @staticmethod
     def tuple_in(t_obs: torch.Tensor, s_obs: torch.Tensor):
@@ -257,7 +256,7 @@ class ParticleFilterModel(nn.Module):
             return self.mixture
 
     def _step_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
-        noise_vec, correct_vec = self.net.tuple_forward_mean(t_obs, s_obs)
+        noise, correct_prior, correct_lik = self.net.tuple_forward_mean(t_obs, s_obs)
 
         # resample (data only)
         self.resample()
@@ -265,8 +264,8 @@ class ParticleFilterModel(nn.Module):
         old_states = self.states.detach()
 
         # PURE steps
-        pred_states = self.predict_states(old_states, noise_vec)
-        weights = self.compute_weights(pred_states, t_obs, s_obs, correct_vec)
+        pred_states = self.predict_states(old_states, noise)
+        weights = self.compute_weights(pred_states, t_obs, s_obs, correct_prior, correct_lik)
 
         temp_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
@@ -283,12 +282,12 @@ class ParticleFilterModel(nn.Module):
         return temp_mixture
 
     @torch.no_grad()
-    def _step_eval(self, t_obs, s_obs):
-        noise_vec, correct_scale = self.net.tuple_forward_mean(t_obs, s_obs)
+    def _step_eval(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
+        noise, correct_prior, correct_lik = self.net.tuple_forward_mean(t_obs, s_obs)
 
         self.resample()
-        self.prediction(noise_vec)
-        self.correction(t_obs, s_obs, correct_scale)
+        self.prediction(noise)
+        self.correction(t_obs, s_obs, correct_prior, correct_lik)
 
     @torch.no_grad()
     def resample(self):
@@ -305,26 +304,33 @@ class ParticleFilterModel(nn.Module):
         )
         self.base_states = self.base_states[idx]
 
-    def prediction(self, noise_scale):
-        new_states = self.predict_states(self.states, noise_scale)
+    def prediction(self, noise: torch.Tensor):
+        new_states = self.predict_states(self.states, noise)
         self.mixture.update(states=new_states)
 
-    def correction(self, t_obs, s_obs, correct_vec):
-        weights = self.compute_weights(self.states, t_obs, s_obs, correct_vec)
+    def correction(
+        self,
+        t_obs: torch.Tensor,
+        s_obs: torch.Tensor,
+        correct_prior: torch.Tensor,
+        correct_lik: torch.Tensor,
+    ) -> torch.Tensor:
+        weights = self.compute_weights(self.states, t_obs, s_obs, correct_prior, correct_lik)
         self.mixture.update(weights=weights)
 
-    def predict_states(self, states: torch.Tensor, noise_scale: torch.Tensor):
+    def predict_states(self, states: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
         """
         PURE prediction (no mutation, differentiable).
         """
-        return self.noise(states, scale=noise_scale)
+        return self.noise(states, scale=noise)
 
     def compute_weights(
         self,
         states: torch.Tensor,
         t_obs: torch.Tensor,
         s_obs: torch.Tensor,
-        correct_vec: torch.Tensor,
+        correct_prior: torch.Tensor,
+        correct_lik: torch.Tensor,
     ):
         """
         PURE correction (no mutation, differentiable).
@@ -336,7 +342,7 @@ class ParticleFilterModel(nn.Module):
         log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
         log_prior = self.trajectory_log_prior(states)
 
-        log_w = correct_vec[0] * log_lik + correct_vec[1] * log_prior
+        log_w = correct_lik[0] * log_lik + (correct_prior * log_prior).sum(dim=1)
         return torch.softmax(log_w, dim=0)
 
     def trajectory_log_prior(self, states: torch.Tensor):
@@ -346,7 +352,7 @@ class ParticleFilterModel(nn.Module):
         diff = states - self.base_states
         # diagonal Mahalanobis (reuse sigma!)
         inv_var = 1.0 / (self.noise._sigma**2)
-        log_prior = -0.5 * (diff**2 * inv_var).sum(dim=1)
+        log_prior = -0.5 * (diff**2 * inv_var)
         return log_prior
 
     # --------------------------------------------------------

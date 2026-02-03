@@ -9,7 +9,7 @@ import torch
 from src.models.particle_filter import ParticleFilterModel
 
 
-class SystemRUL:
+class RULPredictor:
     """
     System-level RUL estimator from multiple Particle Filters
     (one PF per performance metric).
@@ -40,16 +40,56 @@ class SystemRUL:
 
         self.pf_models = pf_models
         self.conf_level = conf_level
+        self.max_life = max_life
         self.t_obs: list[float] = []
         self.s_obs: dict[str, list[float]] = {name: [] for name in pf_models.keys()}
 
         # --- history (for plotting / video) ---
         self.history_time: list[float] = []
-        self.history_rul: list[torch.Tensor] = []  # each: [3] (lower, mean, upper)
+        self.history_component_eol: dict[str, list[tuple[float, float, float]]] = {
+            name: [] for name in pf_models.keys()
+        }
+        self.history_rul: list[tuple[float, float, float]] = []
 
     # --------------------------------------------------
     # Core stepping
     # --------------------------------------------------
+
+    @torch.no_grad()
+    def predict(
+        self,
+        t_data: np.ndarray,
+        s_data: dict[str, np.ndarray],
+        start_idx: int,
+        on_step: Callable[[int, RULPredictor], None] | None = None,
+    ):
+        """
+        Run online system RUL estimation.
+
+        Parameters
+        ----------
+        on_step : optional callback
+            Called after record() at each step:
+                on_step(k, self)
+        """
+
+        self.reset()
+
+        for k, t_curr in enumerate(t_data):
+            self.observe(
+                time=float(t_curr),
+                observations={name: perf[k] for name, perf in s_data.items()},
+            )
+
+            if k < start_idx:
+                continue
+
+            self.step()
+            self.record_component_eol()
+            self.record_system_rul(current_time=float(t_curr))
+
+            if on_step is not None:
+                on_step(k, self)
 
     @torch.no_grad()
     def observe(
@@ -90,67 +130,66 @@ class SystemRUL:
     # --------------------------------------------------
 
     @torch.no_grad()
-    def component_rul(self, current_time: float):
+    def record_component_eol(self):
         """
-        Compute per-component RUL intervals.
-
-        Returns
-        -------
-        dict[name] = (lower, mean, upper)
+        Compute and store per-component EOL uncertainty intervals.
         """
-        rul = {}
-
-        q_lo = (1.0 - self.conf_level) / 2.0
-        q_hi = 1.0 - q_lo
-
         for name, pf in self.pf_models.items():
-            mixture = pf.mixture
-            device = mixture.states.device
-
-            # RUL is evaluated at s = 0
+            device = pf.mixture.states.device
             s0 = torch.tensor([0.0], device=device)
-
-            # quantiles
-            lower = mixture.quantile_mc(s0, q_lo)[0]
-            upper = mixture.quantile_mc(s0, q_hi)[0]
-
-            # mean (NOT median!)
-            dist = mixture.distribution(s0)
-            mean = dist.mean[0]
-
-            # convert EOL → RUL
-            rul[name] = (
-                (lower - current_time).clamp_min(0.0),
-                (mean - current_time).clamp_min(0.0),
-                (upper - current_time).clamp_min(0.0),
-            )
-
-        return rul
+            lower, mean, upper = pf.mixture.uncertainty_interval(s0, self.conf_level)
+            self.history_component_eol[name].append((lower.item(), mean.item(), upper.item()))
 
     # --------------------------------------------------
     # System-level RUL
     # --------------------------------------------------
 
     @torch.no_grad()
-    def system_rul(self, current_time: float):
+    def system_rul(self, current_time: float) -> tuple[float, float, float]:
         """
-        Conservative system RUL = min over components.
-
-        Returns
-        -------
-        (lower, mean, upper)
+        Convert system EOL to system RUL.
         """
-        comp = self.component_rul(current_time)
-
-        lowers = torch.stack([v[0] for v in comp.values()])
-        means = torch.stack([v[1] for v in comp.values()])
-        uppers = torch.stack([v[2] for v in comp.values()])
+        eol_lower, eol_mean, eol_upper = self.system_eol()
 
         return (
-            lowers.min(),
-            means.min(),
-            uppers.min(),
+            max(eol_lower - current_time, 0.0),
+            max(eol_mean - current_time, 0.0),
+            max(eol_upper - current_time, 0.0),
         )
+
+    @torch.no_grad()
+    def system_eol(self) -> tuple[float, float, float]:
+        """
+        Conservative system EOL = min over component EOLs.
+        """
+        lowers = []
+        means = []
+        uppers = []
+
+        for name in self.pf_models.keys():
+            eol_lower, eol_mean, eol_upper = self.history_component_eol[name][-1]
+            lowers.append(eol_lower)
+            means.append(eol_mean)
+            uppers.append(eol_upper)
+
+        # Conservative aggregation in EOL-space
+        eol_lower, eol_mean, eol_upper = self.eol_aggregation(lowers, means, uppers)
+
+        # Physical bounds
+        eol_lower = float(np.clip(eol_lower, 0.0, self.max_life))
+        eol_mean = float(np.clip(eol_mean, 0.0, self.max_life))
+        eol_upper = float(np.clip(eol_upper, 0.0, self.max_life))
+
+        return eol_lower, eol_mean, eol_upper
+
+    @torch.no_grad()
+    def eol_aggregation(
+        self,
+        lowers: list[float],
+        means: list[float],
+        uppers: list[float],
+    ) -> tuple[float, float, float]:
+        return min(lowers), min(means), min(uppers)
 
     def reset(self):
         """
@@ -163,6 +202,7 @@ class SystemRUL:
         # --- reset RUL history ---
         self.history_time.clear()
         self.history_rul.clear()
+        self.history_component_eol = {name: [] for name in self.pf_models.keys()}
 
         # --- reset PF internal states ---
         for pf in self.pf_models.values():
@@ -173,55 +213,18 @@ class SystemRUL:
     # --------------------------------------------------
 
     @torch.no_grad()
-    def record(self, current_time: float):
+    def record_system_rul(self, current_time: float):
         """
         Compute and store system-level RUL at current time.
         """
         lower, mean, upper = self.system_rul(current_time)
 
         self.history_time.append(float(current_time))
-        self.history_rul.append(torch.stack([lower, mean, upper]).cpu())
-
-    @torch.no_grad()
-    def run_system_rul_online(
-        self,
-        data_t: np.ndarray,
-        data_s: dict[str, np.ndarray],
-        start_idx: int,
-        on_step: Callable[[int, SystemRUL], None] | None = None,
-    ) -> pd.DataFrame:
-        """
-        Run online system RUL estimation.
-
-        Parameters
-        ----------
-        on_step : optional callback
-            Called after record() at each step:
-                on_step(k, self)
-        """
-
-        self.reset()
-
-        for k, t_curr in enumerate(data_t):
-            self.observe(
-                time=float(t_curr),
-                observations={name: perf[k] for name, perf in data_s.items()},
-            )
-
-            if k < start_idx:
-                continue
-
-            self.step()
-            self.record(float(t_curr))
-
-            if on_step is not None:
-                on_step(k, self)
-
-        return self.history_to_dataframe()
+        self.history_rul.append((lower, mean, upper))
 
     def history_to_dataframe(self) -> pd.DataFrame:
         elapsed_time = np.asarray(self.history_time)
-        preds = torch.stack(self.history_rul).cpu().numpy()
+        preds = np.asarray(self.history_rul)
         lower, mean, upper = preds.T
 
         return pd.DataFrame(

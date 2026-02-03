@@ -1,19 +1,21 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 from src.models.particle_filter import ParticleFilterModel
-from src.models.system_rul import SystemRUL
+from src.models.rul_predictor import RULPredictor
 
 
-def create_pf_prediciton_freame(
+def create_pf_prediciton_frame(
     ax: plt.Axes,
     pf: ParticleFilterModel,
-    t_grid: np.ndarray,
-    s_grid: np.ndarray,
-    t_data: np.ndarray,
-    s_data: np.ndarray,
-    uncertainty_level: float,
+    t_grid: NDArray,
+    s_grid: NDArray,
+    t_data: NDArray,
+    s_data: NDArray,
+    pred_interval: tuple[float, float, float],
+    conf_level: float,
     current_step: int,
     title: str = "",
     dist_vmax: float = 0.25,
@@ -41,51 +43,50 @@ def create_pf_prediciton_freame(
         legend_loc=dist_legend_loc,
     )
 
-    # uncertainty interva
-    lower, mean, upper = pf.mixture.uncertainty_interval(s=np.zeros(1), level=uncertainty_level)
-    pf.mixture._plot_uncertainty_interval(
+    pf.mixture.plot_uncertainty_interval(
         ax=ax,
-        lower=lower.item(),
-        mean=mean.item(),
-        upper=upper.item(),
+        lower=pred_interval[0],
+        mean=pred_interval[1],
+        upper=pred_interval[2],
         ymax=1.0,
-        label=f"{int(uncertainty_level * 100)}% uncertainty",
+        label=f"{int(conf_level * 100)}% uncertainty",
     )
     return ax
 
 
-def create_rul_prediciton_frame(
-    sys_rul: SystemRUL,
-    step: int,
+def create_rul_prediction_frame(
+    rulpred: RULPredictor,
     t_grid: np.ndarray,
     s_grid: np.ndarray,
     t_data_np: np.ndarray,
     s_data_np: dict[str, np.ndarray],
-    uncertainty_level: float,
+    step: int,
     eol_time: float,
-    test_unit: int,
+    unit: int,
     dist_vmax: float = 0.25,
     dist_plot_mean: bool = True,
     dist_legend_loc="lower left",
 ):
+    assert set(s_data_np) == set(rulpred.pf_models), "PF models and data keys do not match."
     # --- number of performances ---
-    n_perf = len(sys_rul.pf_models)
+    n_perf = len(rulpred.pf_models)
 
     # --- layout ---
     fig, ax_rul, ax_pf = make_rul_pf_layout(n_perf)
 
     # --- fill PF axes left → right, top → bottom ---
-    for ax, (name, pf) in zip(ax_pf, sys_rul.pf_models.items()):
-        create_pf_prediciton_freame(
+    for ax, (name, pf) in zip(ax_pf, rulpred.pf_models.items()):
+        create_pf_prediciton_frame(
             ax=ax,
             pf=pf,
             t_grid=t_grid,
             s_grid=s_grid,
             t_data=t_data_np,
             s_data=s_data_np[name],
-            uncertainty_level=uncertainty_level,
+            pred_interval=rulpred.history_component_eol[name][-1],
+            conf_level=rulpred.conf_level,
             current_step=step,
-            title=f"{name} | unit {test_unit} | step {step}",
+            title=f"{name} | unit {unit} | step {step}",
             dist_vmax=dist_vmax,
             dist_plot_mean=dist_plot_mean,
             dist_legend_loc=dist_legend_loc,
@@ -95,15 +96,16 @@ def create_rul_prediciton_frame(
     for ax in ax_pf[n_perf:]:
         ax.axis("off")
 
+    df = rulpred.history_to_dataframe()
+    df["true_rul"] = np.maximum(eol_time - df["time"], 0.0)
+
     # --- system RUL ---
-    pred_df = sys_rul.history_to_dataframe()
-    pred_df["true_rul"] = np.maximum(eol_time - pred_df["time"], 0.0)
     plot_rul_from_dataframe(
         ax=ax_rul,
-        df=pred_df,
+        df=df,
         y_max=100,
         t_max=eol_time,
-        title=f"System RUL – unit {test_unit}",
+        title=f"System RUL – unit {unit}",
     )
 
     # --- render frame ---

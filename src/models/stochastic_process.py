@@ -30,29 +30,27 @@ class StochasticProcessModel(nn.Module, abc.ABC):
 
     # --------- GENERIC METHODS ----------
 
+    # Fast Monte-Carlo quantiles
     @torch.no_grad()
     def quantile_mc(
         self,
-        s: NDArray,
+        s: torch.Tensor,
         q: float,
         n_samples: int = 4096,
     ) -> torch.Tensor:
         assert 0.0 < q < 1.0, "q must be in (0, 1)"
-        s_torch = torch.tensor(s, dtype=torch.float32, device=self._device())
-        dist_s = self.distribution(s_torch)
+        dist_s = self.distribution(s)
         samples = dist_s.sample((n_samples,))
         return torch.quantile(samples, q, dim=0)
 
     @torch.no_grad()
     def uncertainty_interval(
         self,
-        s: NDArray,
+        s: torch.Tensor,
         level: float = 0.95,
         n_samples: int = 4096,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert 0.0 < level < 1.0, "level must be in (0, 1)"
-
-        s = torch.tensor(s, dtype=torch.float32, device=self._device())
         alpha = 1.0 - level
         lower = self.quantile_mc(s, alpha / 2, n_samples)
         upper = self.quantile_mc(s, 1 - alpha / 2, n_samples)
@@ -69,6 +67,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
     # ------------------------------------------------------------------
     # Plotting utilities
     # ------------------------------------------------------------------
+    @torch.no_grad()
     def plot_distribution(
         self,
         t: NDArray,
@@ -130,8 +129,6 @@ class StochasticProcessModel(nn.Module, abc.ABC):
             mode_Ts = mode_Ts.cpu().numpy()
             ax.plot(mode_Ts, s, color=self.mode_color, lw=2, label="mode")
 
-        self._post_plot(ax)
-
         ax.set_title(title)
         ax.set_xlabel("time")
         ax.set_ylabel("scaled performance")
@@ -145,16 +142,107 @@ class StochasticProcessModel(nn.Module, abc.ABC):
             )
         return ax
 
-    # --- hook (extension point) ---
-    def _post_plot(self, ax: plt.Axes):
-        """Hook for subclasses to add extra plot elements."""
-        pass
+    @torch.no_grad()
+    def plot_random_variable(
+        self,
+        t: NDArray,
+        s: float,
+        func: str = "pdf",
+        ax: plt.Axes | None = None,
+        title: str | None = None,
+        max_prob: float = 1.0,
+    ) -> plt.Axes:
+        """
+        Plot the random variable T_s at a fixed performance value s,
+        styled to match the legacy Gamma Mixture plot.
+        """
+        device = self._device()
+        t_torch = torch.tensor(t, dtype=torch.float32, device=device)
+        s_torch = torch.tensor([s], dtype=torch.float32, device=device)
 
+        dist_s = self.distribution(s_torch)
+
+        # --- PDF / CDF ---
+        if func == "pdf":
+            y = dist_s.log_prob(t_torch).exp()
+        elif func == "cdf":
+            y = dist_s.cdf(t_torch)
+        else:
+            raise ValueError("func must be 'pdf' or 'cdf'")
+
+        y = y.detach().cpu().numpy()
+
+        if ax is None:
+            _, ax = plt.subplots(figsize=(10, 6))
+
+        # --- mixture curve (black dashed) ---
+        ax.plot(
+            t,
+            y,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            label=f"Mixture {func}",
+        )
+
+        # --- axes & labels ---
+        ax.set_xlabel("t")
+        ax.set_ylabel(func)
+        ax.set_title(title or f"T_s distribution at s = {s}")
+        ax.set_ylim(0, max_prob)
+        ax.legend()
+        return ax
+
+    @torch.no_grad()
+    def plot_uncertainty_interval(
+        self,
+        ax: plt.Axes,
+        lower: float,
+        mean: float,
+        upper: float,
+        ymax: float,
+        label: str | None = None,
+    ):
+        """
+        Plot an uncertainty interval as a horizontal segment near y=0
+        with a short mean indicator.
+        """
+        # visual proportions (match original look)
+        h_interval = 0.01 * ymax
+        h_mean = 0.04 * ymax
+        h_bounds = 0.025 * ymax
+
+        # uncertainty rectangle
+        rect = patches.Rectangle(
+            (lower, 0.0),
+            upper - lower,
+            h_interval,
+            facecolor=self.uncertainty_color,
+            edgecolor="black",
+            linewidth=1,
+            alpha=1.0,
+            label=label,
+        )
+        ax.add_patch(rect)
+
+        # mean
+        ax.vlines(
+            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label="mean"
+        )
+
+        # bounds
+        ax.vlines([lower, upper], ymin=0, ymax=h_bounds, color=self.bound_color, linewidth=2)
+
+        ax.legend()
+
+    @torch.no_grad()
     def plot_uncertainty_band(
         self,
         s: NDArray,
+        lower: NDArray,
+        mean: NDArray,
+        upper: NDArray,
         level: float = 0.95,
-        n_samples: int = 4096,
         ax: plt.Axes | None = None,
         alpha: float = 0.5,
         title: str = "Uncertainty interval",
@@ -163,11 +251,6 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         """
         Plot uncertainty interval for the stochastic process over performance values s.
         """
-        lower, mean, upper = self.uncertainty_interval(s, level=level, n_samples=n_samples)
-
-        lower = lower.cpu().numpy()
-        mean = mean.cpu().numpy()
-        upper = upper.cpu().numpy()
 
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 6))
@@ -218,111 +301,6 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.legend(loc=legend_loc)
 
         return ax
-
-    def plot_random_variable(
-        self,
-        t: NDArray,
-        s: float,
-        func: str = "pdf",
-        level: float = 0,
-        n_samples: int = 4096,
-        ax: plt.Axes | None = None,
-        title: str | None = None,
-        max_prob: float = 1.0,
-    ) -> plt.Axes:
-        """
-        Plot the random variable T_s at a fixed performance value s,
-        styled to match the legacy Gamma Mixture plot.
-        """
-        device = self._device()
-        t_torch = torch.tensor(t, dtype=torch.float32, device=device)
-        s_torch = torch.tensor([s], dtype=torch.float32, device=device)
-
-        dist_s = self.distribution(s_torch)
-
-        # --- PDF / CDF ---
-        if func == "pdf":
-            y = dist_s.log_prob(t_torch).exp()
-        elif func == "cdf":
-            y = dist_s.cdf(t_torch)
-        else:
-            raise ValueError("func must be 'pdf' or 'cdf'")
-
-        y = y.detach().cpu().numpy()
-
-        if ax is None:
-            _, ax = plt.subplots(figsize=(10, 6))
-
-        # --- mixture curve (black dashed) ---
-        ax.plot(
-            t,
-            y,
-            color="black",
-            linestyle="--",
-            linewidth=2,
-            label=f"Mixture {func}",
-        )
-
-        # --- uncertainty interval ---
-        if level > 0:
-            lower, mean, upper = self.uncertainty_interval(
-                s_torch.cpu().numpy(), level=level, n_samples=n_samples
-            )
-            self._plot_uncertainty_interval(
-                ax=ax,
-                lower=lower.item(),
-                mean=mean.item(),
-                upper=upper.item(),
-                ymax=max_prob,
-                label=f"{int(level * 100)}% uncertainty",
-            )
-
-        # --- axes & labels ---
-        ax.set_xlabel("t")
-        ax.set_ylabel(func)
-        ax.set_title(title or f"T_s distribution at s = {s}")
-        ax.set_ylim(0, max_prob)
-        ax.legend()
-        return ax
-
-    def _plot_uncertainty_interval(
-        self,
-        ax: plt.Axes,
-        lower: float,
-        mean: float,
-        upper: float,
-        ymax: float,
-        label: str | None = None,
-    ):
-        """
-        Plot an uncertainty interval as a horizontal segment near y=0
-        with a short mean indicator.
-        """
-        # visual proportions (match original look)
-        h_interval = 0.01 * ymax
-        h_mean = 0.04 * ymax
-        h_bounds = 0.025 * ymax
-
-        # uncertainty rectangle
-        rect = patches.Rectangle(
-            (lower, 0.0),
-            upper - lower,
-            h_interval,
-            facecolor=self.uncertainty_color,
-            edgecolor="black",
-            linewidth=1,
-            alpha=1.0,
-            label=label,
-        )
-        ax.add_patch(rect)
-
-        # mean
-        ax.vlines(
-            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label="mean"
-        )
-
-        # bounds
-        ax.vlines([lower, upper], ymin=0, ymax=h_bounds, color=self.bound_color, linewidth=2)
 
     @staticmethod
     @torch.no_grad()
@@ -383,3 +361,17 @@ class StochasticProcessModel(nn.Module, abc.ABC):
                 framealpha=0.9,
             )
         return ax
+
+
+#  if level > 0:
+#             lower, mean, upper = self.uncertainty_interval(
+#                 s_torch, level=level, n_samples=n_samples
+#             )
+#             self._plot_uncertainty_interval(
+#                 ax=ax,
+#                 lower=lower.item(),
+#                 mean=mean.item(),
+#                 upper=upper.item(),
+#                 ymax=max_prob,
+#                 label=f"{int(level * 100)}% uncertainty",
+#             )
