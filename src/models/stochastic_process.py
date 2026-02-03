@@ -151,6 +151,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax: plt.Axes | None = None,
         title: str | None = None,
         max_prob: float = 1.0,
+        legend_loc: str | None = "upper right",
     ) -> plt.Axes:
         """
         Plot the random variable T_s at a fixed performance value s,
@@ -190,7 +191,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.set_ylabel(func)
         ax.set_title(title or f"T_s distribution at s = {s}")
         ax.set_ylim(0, max_prob)
-        ax.legend()
+        ax.legend(loc=legend_loc)
         return ax
 
     @torch.no_grad()
@@ -201,7 +202,9 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         mean: float,
         upper: float,
         ymax: float,
-        label: str | None = None,
+        unc_label: str | None = None,
+        mean_label: str | None = None,
+        legend_loc: str = "upper right",
     ):
         """
         Plot an uncertainty interval as a horizontal segment near y=0
@@ -221,19 +224,19 @@ class StochasticProcessModel(nn.Module, abc.ABC):
             edgecolor="black",
             linewidth=1,
             alpha=1.0,
-            label=label,
+            label=unc_label,
         )
         ax.add_patch(rect)
 
         # mean
         ax.vlines(
-            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label="mean"
+            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label=mean_label
         )
 
         # bounds
         ax.vlines([lower, upper], ymin=0, ymax=h_bounds, color=self.bound_color, linewidth=2)
 
-        ax.legend()
+        ax.legend(loc=legend_loc)
 
     @torch.no_grad()
     def plot_uncertainty_band(
@@ -361,17 +364,3 @@ class StochasticProcessModel(nn.Module, abc.ABC):
                 framealpha=0.9,
             )
         return ax
-
-
-#  if level > 0:
-#             lower, mean, upper = self.uncertainty_interval(
-#                 s_torch, level=level, n_samples=n_samples
-#             )
-#             self._plot_uncertainty_interval(
-#                 ax=ax,
-#                 lower=lower.item(),
-#                 mean=mean.item(),
-#                 upper=upper.item(),
-#                 ymax=max_prob,
-#                 label=f"{int(level * 100)}% uncertainty",
-#             )

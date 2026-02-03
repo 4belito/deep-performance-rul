@@ -49,7 +49,8 @@ def create_pf_prediciton_frame(
         mean=pred_interval[1],
         upper=pred_interval[2],
         ymax=1.0,
-        label=f"{int(conf_level * 100)}% uncertainty",
+        unc_label=f"{int(conf_level * 100)}% unc",
+        legend_loc=dist_legend_loc,
     )
     return ax
 
