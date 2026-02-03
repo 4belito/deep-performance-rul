@@ -157,6 +157,7 @@ def plot_rul_from_dataframe(
     t_max: float = 100,
     y_max: float = 100,
     title: str = "RUL Prediction",
+    unc_label: str = "unc",
 ):
     ax.plot(
         df["time"],
@@ -183,7 +184,7 @@ def plot_rul_from_dataframe(
         df["upper"],
         color="#FF7F50",
         alpha=0.4,
-        label="unc",
+        label=unc_label,
     )
 
     ax.set_title(title)
