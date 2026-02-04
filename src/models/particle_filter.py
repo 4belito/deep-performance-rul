@@ -10,92 +10,10 @@ from torch.nn import functional as F
 from src.models.degradation import DegModel
 from src.models.mixture import MixtureDegModel
 
+
 # ============================================================
 # Particle-Filter MLP
 # ============================================================
-
-
-class ParticleFilterGRU(nn.Module):
-    def __init__(
-        self,
-        state_dim: int,
-        hidden_dim: int = 32,
-        num_layers: int = 1,
-    ):
-        super().__init__()
-
-        self.state_dim = state_dim
-        self.hidden_dim = hidden_dim
-
-        # GRU over (t, s)
-        self.gru = nn.GRU(
-            input_size=2,
-            hidden_size=hidden_dim,
-            num_layers=num_layers,
-            batch_first=True,
-        )
-
-        # Head produces EXACT same outputs as MLP
-        output_dim = 2 * state_dim + 2
-        self.head = nn.Linear(hidden_dim, output_dim)
-
-        self.apply(self._init_identity)
-
-    def _init_identity(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.normal_(m.weight, mean=0.0, std=1e-3)
-            nn.init.constant_(m.bias, 0.0)
-
-    # --------------------------------------------------
-    # Core forward
-    # --------------------------------------------------
-    def forward(self, x: torch.Tensor, h=None):
-        """
-        x: [B, T, 2]  where 2 = (t, s)
-        """
-        out, h = self.gru(x, h)
-        y = self.head(out)  # [B, T, output_dim]
-        return y, h
-
-    # --------------------------------------------------
-    # Output unpacking (same as before)
-    # --------------------------------------------------
-    def tuple_out(self, x: torch.Tensor):
-        noise = x[..., : self.state_dim]
-        correct_prior = x[..., self.state_dim : -2]
-        correct_lik = x[..., -2:-1]
-        forget_lik = x[..., -1:]
-        return noise, correct_prior, correct_lik, forget_lik
-
-    # --------------------------------------------------
-    # Input adapter (same as before)
-    # --------------------------------------------------
-    @staticmethod
-    def tuple_in(t_obs: torch.Tensor, s_obs: torch.Tensor):
-        """
-        Returns [1, T, 2]
-        """
-        x = torch.stack([t_obs, s_obs], dim=-1)
-        return x.unsqueeze(0)
-
-    # --------------------------------------------------
-    # API-compatible methods
-    # --------------------------------------------------
-    def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor, h=None):
-        x = self.tuple_in(t_obs, s_obs)
-        out, h = self.forward(x, h)
-        return self.tuple_out(out[:, -1]), h
-
-    def tuple_forward_mean(self, t_obs: torch.Tensor, s_obs: torch.Tensor, h=None):
-        """
-        Mean over time (matches your current behavior)
-        """
-        x = self.tuple_in(t_obs, s_obs)
-        out, h = self.forward(x, h)
-        out_mean = out.mean(dim=1).squeeze(0)
-        return self.tuple_out(out_mean), h
-
-
 class ParticleFilterMLP(nn.Module):
     def __init__(
         self,
@@ -231,8 +149,6 @@ class ParticleFilterMLP(nn.Module):
 # ============================================================
 # Diagonal Mahalanobis Noise (PF-safe)
 # ============================================================
-
-
 class DiagonalMahalanobisNoise(nn.Module):
     def __init__(self, eps: float = 1e-6):
         super().__init__()
@@ -317,6 +233,7 @@ class ParticleFilterModel(nn.Module):
         """
         Reset particle filter to its initial prior.
         """
+        self.prior_states = self.base_states.clone()
         states = self.noise(self.base_states, scale=self.multiply_scale)
         weights = torch.full(
             (self.n_particles,),
@@ -385,7 +302,7 @@ class ParticleFilterModel(nn.Module):
             weights=torch.full((n,), 1.0 / n, device=self.weights.device),
             onsets=self.onsets[idx],
         )
-        self.base_states = self.base_states[idx]
+        self.prior_states = self.prior_states[idx]
 
     def prediction(self, noise: torch.Tensor):
         new_states = self.predict_states(self.states, noise)
@@ -466,7 +383,7 @@ class ParticleFilterModel(nn.Module):
         """
         Gaussian prior around initial particle states.
         """
-        diff = states - self.base_states
+        diff = states - self.prior_states
         # diagonal Mahalanobis (reuse sigma!)
         inv_var = 1.0 / (self.noise._sigma**2)
         log_prior = -0.5 * (diff**2 * inv_var)
@@ -525,7 +442,8 @@ class ParticleFilterModel(nn.Module):
         base_states = base_states.repeat(repeat, 1).clone()
         onsets = base_onsets.repeat(repeat)
         self.base_states: torch.Tensor
-        self.register_buffer("base_states", base_states)
+        self.register_buffer("base_states", base_states.clone())
+        self.prior_states = base_states.clone()
 
         with torch.no_grad():
             states = self.noise(base_states, scale=self.multiply_scale)
