@@ -26,6 +26,7 @@ class RULPredictor:
         pf_models: dict[str, ParticleFilterModel],
         conf_level: float = 0.95,
         max_life: float = 100.0,
+        current_obs: bool = True,
     ):
         """
         Parameters
@@ -41,6 +42,7 @@ class RULPredictor:
         self.pf_models = pf_models
         self.conf_level = conf_level
         self.max_life = max_life
+        self.current_obs = current_obs
         self.t_obs: list[float] = []
         self.s_obs: dict[str, list[float]] = {name: [] for name in pf_models.keys()}
 
@@ -119,6 +121,9 @@ class RULPredictor:
                 dtype=torch.float32,
                 device=device,
             )
+            if self.current_obs:
+                t_tensor = t_tensor[[-1]]
+                s_tensor = s_tensor[[-1]]
 
             pf.step(
                 s_obs=s_tensor,

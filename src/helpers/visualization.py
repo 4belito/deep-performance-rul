@@ -19,7 +19,7 @@ def create_pf_prediciton_frame(
     current_step: int,
     title: str = "",
     dist_vmax: float = 0.25,
-    dist_plot_mean: bool = True,
+    dist_plot_mean: bool = False,
     dist_legend_loc="lower left",
 ) -> plt.Axes:
     # --- render frame --
@@ -65,7 +65,7 @@ def create_rul_prediction_frame(
     eol_time: float,
     unit: int,
     dist_vmax: float = 0.25,
-    dist_plot_mean: bool = True,
+    dist_plot_mean: bool = False,
     dist_legend_loc="lower left",
 ):
     assert set(s_data_np) == set(rulpred.pf_models), "PF models and data keys do not match."
@@ -158,6 +158,7 @@ def plot_rul_from_dataframe(
     y_max: float = 100,
     title: str = "RUL Prediction",
     unc_label: str = "unc",
+    legend_loc: str = "lower left",
 ):
     ax.plot(
         df["time"],
@@ -192,4 +193,4 @@ def plot_rul_from_dataframe(
     ax.set_ylabel("RUL")
     ax.set_ylim(0, y_max)
     ax.set_xlim(0, t_max)
-    ax.legend()
+    ax.legend(loc=legend_loc)

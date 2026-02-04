@@ -1,4 +1,4 @@
-""" Operating-condition normalization + residual aggregation + health index pipeline """
+"""Operating-condition normalization + residual aggregation + health index pipeline"""
 
 import numpy as np
 import pandas as pd
@@ -9,6 +9,7 @@ from sklearn.utils.validation import check_is_fitted
 
 def to_float32(x: np.ndarray) -> np.ndarray:
     return x.astype(np.float32)
+
 
 # ============================================================
 # Residual aggregation transformer
@@ -45,10 +46,7 @@ class OperCondResidualAggregator(BaseEstimator, TransformerMixin):
         res[self.unit_col] = df[self.unit_col].values
         res[self.cycle_col] = df[self.cycle_col].values
 
-        return (
-            res.groupby([self.unit_col, self.cycle_col], as_index=False)
-            .mean()
-        )
+        return res.groupby([self.unit_col, self.cycle_col], as_index=False).mean()
 
 
 # ============================================================
@@ -178,7 +176,7 @@ class EstimationPipeline(BaseEstimator, TransformerMixin):
         self.is_fitted_ = True
         return self
 
-    def set_bounds(self, df: pd.DataFrame, q_low: float = 0.05, q_high: float = 0.95):
+    def set_bounds(self, df: pd.DataFrame, q_low: float = 0, q_high: float = 1.0):
         check_is_fitted(self, "is_fitted_")
 
         residuals = self.residual_aggregator.transform(df)

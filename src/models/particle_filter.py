@@ -15,6 +15,87 @@ from src.models.mixture import MixtureDegModel
 # ============================================================
 
 
+class ParticleFilterGRU(nn.Module):
+    def __init__(
+        self,
+        state_dim: int,
+        hidden_dim: int = 32,
+        num_layers: int = 1,
+    ):
+        super().__init__()
+
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+
+        # GRU over (t, s)
+        self.gru = nn.GRU(
+            input_size=2,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+        )
+
+        # Head produces EXACT same outputs as MLP
+        output_dim = 2 * state_dim + 2
+        self.head = nn.Linear(hidden_dim, output_dim)
+
+        self.apply(self._init_identity)
+
+    def _init_identity(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, mean=0.0, std=1e-3)
+            nn.init.constant_(m.bias, 0.0)
+
+    # --------------------------------------------------
+    # Core forward
+    # --------------------------------------------------
+    def forward(self, x: torch.Tensor, h=None):
+        """
+        x: [B, T, 2]  where 2 = (t, s)
+        """
+        out, h = self.gru(x, h)
+        y = self.head(out)  # [B, T, output_dim]
+        return y, h
+
+    # --------------------------------------------------
+    # Output unpacking (same as before)
+    # --------------------------------------------------
+    def tuple_out(self, x: torch.Tensor):
+        noise = x[..., : self.state_dim]
+        correct_prior = x[..., self.state_dim : -2]
+        correct_lik = x[..., -2:-1]
+        forget_lik = x[..., -1:]
+        return noise, correct_prior, correct_lik, forget_lik
+
+    # --------------------------------------------------
+    # Input adapter (same as before)
+    # --------------------------------------------------
+    @staticmethod
+    def tuple_in(t_obs: torch.Tensor, s_obs: torch.Tensor):
+        """
+        Returns [1, T, 2]
+        """
+        x = torch.stack([t_obs, s_obs], dim=-1)
+        return x.unsqueeze(0)
+
+    # --------------------------------------------------
+    # API-compatible methods
+    # --------------------------------------------------
+    def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor, h=None):
+        x = self.tuple_in(t_obs, s_obs)
+        out, h = self.forward(x, h)
+        return self.tuple_out(out[:, -1]), h
+
+    def tuple_forward_mean(self, t_obs: torch.Tensor, s_obs: torch.Tensor, h=None):
+        """
+        Mean over time (matches your current behavior)
+        """
+        x = self.tuple_in(t_obs, s_obs)
+        out, h = self.forward(x, h)
+        out_mean = out.mean(dim=1).squeeze(0)
+        return self.tuple_out(out_mean), h
+
+
 class ParticleFilterMLP(nn.Module):
     def __init__(
         self,
@@ -25,7 +106,7 @@ class ParticleFilterMLP(nn.Module):
         super().__init__()
 
         self.state_dim = state_dim
-        output_dim = 2 * state_dim + 1  # noise vector + correction vector
+        output_dim = 2 * state_dim + 2  # noise vector + correction vector
 
         layers = []
         dims = (2, *hidden_dims, output_dim)
@@ -48,9 +129,10 @@ class ParticleFilterMLP(nn.Module):
 
     def tuple_out(self, x: torch.Tensor):
         noise = x[..., : self.state_dim]
-        correct_prior = x[..., self.state_dim : -1]
-        correct_lik = x[..., -1:]
-        return noise, correct_prior, correct_lik
+        correct_prior = x[..., self.state_dim : -2]
+        correct_lik = x[..., -2:-1]
+        forget_lik = x[..., -1:]
+        return noise, correct_prior, correct_lik, forget_lik
 
     @staticmethod
     def tuple_in(t_obs: torch.Tensor, s_obs: torch.Tensor):
@@ -256,7 +338,7 @@ class ParticleFilterModel(nn.Module):
             return self.mixture
 
     def _step_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
-        noise, correct_prior, correct_lik = self.net.tuple_forward_mean(t_obs, s_obs)
+        noise, correct_prior, correct_lik, forget_lik = self.net.tuple_forward_mean(t_obs, s_obs)
 
         # resample (data only)
         self.resample()
@@ -265,7 +347,9 @@ class ParticleFilterModel(nn.Module):
 
         # PURE steps
         pred_states = self.predict_states(old_states, noise)
-        weights = self.compute_weights(pred_states, t_obs, s_obs, correct_prior, correct_lik)
+        weights = self.compute_weights(
+            pred_states, t_obs, s_obs, correct_prior, correct_lik, forget_lik
+        )
 
         temp_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
@@ -283,11 +367,10 @@ class ParticleFilterModel(nn.Module):
 
     @torch.no_grad()
     def _step_eval(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
-        noise, correct_prior, correct_lik = self.net.tuple_forward_mean(t_obs, s_obs)
-
+        noise, correct_prior, correct_lik, forget_lik = self.net.tuple_forward_mean(t_obs, s_obs)
         self.resample()
         self.prediction(noise)
-        self.correction(t_obs, s_obs, correct_prior, correct_lik)
+        self.correction(t_obs, s_obs, correct_prior, correct_lik, forget_lik)
 
     @torch.no_grad()
     def resample(self):
@@ -314,8 +397,11 @@ class ParticleFilterModel(nn.Module):
         s_obs: torch.Tensor,
         correct_prior: torch.Tensor,
         correct_lik: torch.Tensor,
+        forget_lik: torch.Tensor,
     ) -> torch.Tensor:
-        weights = self.compute_weights(self.states, t_obs, s_obs, correct_prior, correct_lik)
+        weights = self.compute_weights(
+            self.states, t_obs, s_obs, correct_prior, correct_lik, forget_lik
+        )
         self.mixture.update(weights=weights)
 
     def predict_states(self, states: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
@@ -331,6 +417,7 @@ class ParticleFilterModel(nn.Module):
         s_obs: torch.Tensor,
         correct_prior: torch.Tensor,
         correct_lik: torch.Tensor,
+        forget_lik: torch.Tensor,  # NEW
     ):
         """
         PURE correction (no mutation, differentiable).
@@ -339,11 +426,41 @@ class ParticleFilterModel(nn.Module):
         onsets = self.onsets.unsqueeze(1)
         params = self.deg_class.forward_with_states(s_obs, states, onsets)
         comp_dist = self.deg_class.build_distribution_from_params(params)
-        log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
+
+        log_probs = comp_dist.log_prob(t_obs.unsqueeze(1))
+
+        log_lik = self.weighted_log_likelihood(
+            log_probs=log_probs,
+            alpha=forget_lik[0],  # scalar, stable
+        )
+        # log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
         log_prior = self.trajectory_log_prior(states)
 
         log_w = correct_lik[0] * log_lik + (correct_prior * log_prior).sum(dim=1)
         return torch.softmax(log_w, dim=0)
+
+    def weighted_log_likelihood(
+        self,
+        log_probs: torch.Tensor,  # [B, N]
+        alpha: torch.Tensor,  # [1]
+    ):
+        """
+        Exponentially weighted average over time.
+        More recent observations get higher weight.
+        """
+        B = log_probs.shape[0]
+        device = log_probs.device
+
+        # time indices: [-B+1, ..., 0]
+        idx = torch.arange(B, device=device) - (B - 1)
+
+        # positive decay
+        alpha = F.softplus(alpha)
+
+        weights = torch.exp(alpha * idx)  # [B]
+        weights = weights / weights.sum()  # normalize
+
+        return (weights[:, None] * log_probs).sum(dim=0)
 
     def trajectory_log_prior(self, states: torch.Tensor):
         """

@@ -70,8 +70,8 @@ class StochasticProcessModel(nn.Module, abc.ABC):
     @torch.no_grad()
     def plot_distribution(
         self,
-        t: NDArray,
-        s: NDArray,
+        t: np.ndarray,
+        s: np.ndarray,
         func: str = "pdf",
         ax: plt.Axes | None = None,
         vmax: float | None = None,
@@ -85,25 +85,20 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         device = self._device()
 
         # grid
-        T, S = np.meshgrid(t, s)
-        s_torch = torch.tensor(S.flatten(), dtype=torch.float32, device=device)
-        t_torch = torch.tensor(T.flatten(), dtype=torch.float32, device=device)
+        t_grid, s_grid = np.meshgrid(t, s)
+        s_torch = torch.tensor(s_grid.flatten(), dtype=torch.float32, device=device)
+        t_torch = torch.tensor(t_grid.flatten(), dtype=torch.float32, device=device)
 
         with torch.no_grad():
             dist_Ts = self.distribution(s_torch)
-
             if func == "pdf":
-                Z = dist_Ts.log_prob(t_torch).exp()
+                z_torch = dist_Ts.log_prob(t_torch).exp()
             elif func == "cdf":
-                Z = dist_Ts.cdf(t_torch)
+                z_torch = dist_Ts.cdf(t_torch)
             else:
                 raise ValueError("func must be 'pdf' or 'cdf'")
 
-            if plot_mean or plot_mode:
-                s_line = torch.tensor(s, dtype=torch.float32, device=device)
-                dist_Ts_line = self.distribution(s_line)
-
-        Z = Z.reshape(S.shape).cpu().numpy()
+        z_grid = z_torch.reshape(s_grid.shape).cpu().numpy()
 
         if ax is None:
             _, ax = plt.subplots(figsize=(10, 6))
@@ -111,23 +106,21 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         norm = mcolors.PowerNorm(
             gamma=gamma_prob,
             vmin=0,
-            vmax=vmax if vmax is not None else np.percentile(Z, 99),
+            vmax=vmax if vmax is not None else np.percentile(z_torch, 99),
         )
 
-        c = ax.pcolormesh(T, S, Z, shading="auto", cmap="viridis", norm=norm)
+        c = ax.pcolormesh(t_grid, s_grid, z_grid, shading="auto", cmap="viridis", norm=norm)
         plt.colorbar(c, ax=ax, label=func)
 
         if plot_mean:
-            mean_Ts = dist_Ts_line.mean
-            mean_Ts = mean_Ts.cpu().numpy()
-            ax.plot(
-                mean_Ts, s, color=self.mean_color, lw=1.5, linestyle="--", label="mean", alpha=0.8
-            )
+            mean_Ts = dist_Ts.mean.reshape(s_grid.shape)
+            mean_curve = mean_Ts[:, 0]
+            ax.plot(mean_curve.cpu().numpy(), s, "--", color=self.mean_color, label="mean")
 
         if plot_mode:
-            mode_Ts = dist_Ts_line.mode
-            mode_Ts = mode_Ts.cpu().numpy()
-            ax.plot(mode_Ts, s, color=self.mode_color, lw=2, label="mode")
+            mode_Ts = dist_Ts.mode.reshape(s_grid.shape)
+            mode_curve = mode_Ts[:, 0]
+            ax.plot(mode_curve.cpu().numpy(), s, "--", color=self.mode_color, label="mean")
 
         ax.set_title(title)
         ax.set_xlabel("time")
@@ -135,11 +128,13 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         ax.set_xlim([0, t.max()])
         ax.set_ylim([0, 1])
         if legend_loc:
-            ax.legend(
-                loc=legend_loc,  # fixed → no search
-                frameon=True,
-                framealpha=0.9,
-            )
+            _, labels = ax.get_legend_handles_labels()
+            if labels:
+                ax.legend(
+                    loc=legend_loc,  # fixed → no search
+                    frameon=True,
+                    framealpha=0.9,
+                )
         return ax
 
     @torch.no_grad()
