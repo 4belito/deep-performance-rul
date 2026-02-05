@@ -17,7 +17,7 @@ class BestModelTracker(Callback):
         min_delta: float = 0.0,
         save_dir: Path | str = ".",
         f_params: str = "best_model.pt",
-        load_best: bool = False,   # optional
+        load_best: bool = False,  # optional
     ):
         self.monitor = monitor
         self.min_delta = min_delta
@@ -36,9 +36,7 @@ class BestModelTracker(Callback):
 
         if current_loss < self.best_loss - self.min_delta:
             self.best_loss = current_loss
-            self.best_state_dict = copy.deepcopy(
-                net.module_.state_dict()
-            )
+            self.best_state_dict = copy.deepcopy(net.module_.state_dict())
 
     def on_train_end(self, net: NeuralNetRegressor, **kwargs):
         if self.best_state_dict is None:
@@ -52,6 +50,7 @@ class BestModelTracker(Callback):
             self.save_dir / self.f_params,
         )
 
+
 class PlotNormalDistWithData(Callback):
     def __init__(
         self,
@@ -59,12 +58,13 @@ class PlotNormalDistWithData(Callback):
         s_grid: np.ndarray,
         time_data=None,
         perform_data=None,
-        plot_every: int | None = None,   # None → no periodic plots
+        plot_every: int | None = None,  # None → no periodic plots
         func: str = "pdf",
         title: str = "Normal PDF of $T_s$",
         plot_at_end: bool = True,
-        show: bool = False,              # ← show interactively?
+        show: bool = False,  # ← show interactively?
         save_dir: str | Path | None = None,  # ← save figures here if not None
+        legend_loc: str | None = "lower left",
         dpi: int = 150,
     ):
         self.t_grid = t_grid
@@ -78,6 +78,7 @@ class PlotNormalDistWithData(Callback):
         self.show = show
         self.save_dir = Path(save_dir) if save_dir is not None else None
         self.dpi = dpi
+        self.legend_loc = legend_loc
 
         if self.save_dir is not None:
             self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -90,7 +91,6 @@ class PlotNormalDistWithData(Callback):
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-
     # -------- shared plotting logic --------
     def _plot(self, model: NormalDegradationModel, title: str, suffix: str):
         _, ax = plt.subplots(figsize=(10, 6))
@@ -101,6 +101,7 @@ class PlotNormalDistWithData(Callback):
             func=self.func,
             ax=ax,
             title=title,
+            legend_loc=self.legend_loc,
         )
 
         if self.time_data is not None and self.perform_data is not None:
@@ -115,7 +116,7 @@ class PlotNormalDistWithData(Callback):
                 markeredgewidth=0.8,
                 label="data",
             )
-            ax.legend()
+            ax.legend(loc=self.legend_loc)
 
         plt.tight_layout()
 
@@ -131,7 +132,7 @@ class PlotNormalDistWithData(Callback):
             plt.close()
 
     # -------- periodic plotting --------
-    def on_epoch_end(self, net: NeuralNetRegressor , **kwargs):
+    def on_epoch_end(self, net: NeuralNetRegressor, **kwargs):
         if self.plot_every is None:
             return
 
@@ -147,7 +148,7 @@ class PlotNormalDistWithData(Callback):
         )
 
     # -------- final plotting --------
-    def on_train_end(self, net:NeuralNetRegressor, **kwargs):
+    def on_train_end(self, net: NeuralNetRegressor, **kwargs):
         if not self.plot_at_end:
             return
 
