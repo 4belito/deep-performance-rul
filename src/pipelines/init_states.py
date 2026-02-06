@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from skorch import NeuralNetRegressor
 from skorch.callbacks import Callback
 
-from src.models.normal import NormalDegradationModel
+from src.models.degradation_models.normal import NormalDegradationModel
 
 
 class BestModelTracker(Callback):
