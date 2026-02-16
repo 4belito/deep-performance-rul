@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from src.models.particle_filter import ParticleFilterModel
+from src.models.particle_filter.core import ParticleFilterModel
 from src.models.rul_predictor import RULPredictor
 
 
@@ -159,13 +159,14 @@ def plot_rul_from_dataframe(
     title: str = "RUL Prediction",
     unc_label: str = "unc",
     legend_loc: str = "lower left",
+    show_legend: bool = True,
 ):
     ax.plot(
         df["time"],
         df["true_rul"],
         "--",
         color="green",
-        label="true",
+        label="true" if show_legend else None,
     )
 
     ax.plot(
@@ -173,7 +174,7 @@ def plot_rul_from_dataframe(
         df["mean"],
         "-",
         color="blue",
-        label="pred",
+        label="pred" if show_legend else None,
     )
 
     ax.plot(df["time"], df["lower"], "-", color="black", linewidth=0.5)
@@ -185,7 +186,7 @@ def plot_rul_from_dataframe(
         df["upper"],
         color="#FF7F50",
         alpha=0.4,
-        label=unc_label,
+        label=unc_label if show_legend else None,
     )
 
     ax.set_title(title)
@@ -193,4 +194,5 @@ def plot_rul_from_dataframe(
     ax.set_ylabel("RUL")
     ax.set_ylim(0, y_max)
     ax.set_xlim(0, t_max)
-    ax.legend(loc=legend_loc)
+    if show_legend:
+        ax.legend(loc=legend_loc)

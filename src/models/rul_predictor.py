@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.models.particle_filter import ParticleFilterModel
+from src.models.particle_filter.core import ParticleFilterModel
 
 
 class RULPredictor:

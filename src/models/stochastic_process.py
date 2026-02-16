@@ -10,7 +10,7 @@ import torch.distributions as dist
 import torch.nn as nn
 
 
-class StochasticProcessModel(nn.Module, abc.ABC):
+class StochasticProcess(nn.Module, abc.ABC):
     """
     Generic plotting utilities for objects that implement:
 
@@ -120,7 +120,7 @@ class StochasticProcessModel(nn.Module, abc.ABC):
         if plot_mode:
             mode_Ts = dist_Ts.mode.reshape(s_grid.shape)
             mode_curve = mode_Ts[:, 0]
-            ax.plot(mode_curve.cpu().numpy(), s, "--", color=self.mode_color, label="mean")
+            ax.plot(mode_curve.cpu().numpy(), s, "--", color=self.mode_color, label="mode")
 
         ax.set_title(title)
         ax.set_xlabel("time")
