@@ -41,9 +41,10 @@ class DegModel(StochasticProcess, abc.ABC):
         """Build a torch Distribution from params."""
         raise NotImplementedError
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
     def forward_with_states(
+        cls,
         s: torch.Tensor,
         states: torch.Tensor,  # [..., RP]
         onsets: torch.Tensor,  # [..., 1]

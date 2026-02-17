@@ -19,10 +19,13 @@ class NormalDegradationNLL(nn.Module):
 
 
 class NormalDegradation(DegModel):
+    max_nvy = 100.0  # avoid numerical issues with (dvx + dvs * so + nvy * (s - so))^2
+    min_so_gab = 1e-3  # avoid numerical issues with (nmy - s) / (nmy - so)
+    min_to_gab = 1  # mean EOL 1 cycle after degradation onset
+    min_dmc = 0.05  # minimal curvature to avoid numerical issues with (1 - (to/dmx)^(1/dmc))
 
     def __init__(self, onset: float | None = None):
         super().__init__(onset=onset)
-
         # --------------------------------------------------
         # Raw (unconstrained) parameters
         # t : time (x-axis)
@@ -40,7 +43,9 @@ class NormalDegradation(DegModel):
 
         # Nominal regime parameters
         self.raw_nmy = nn.Parameter(torch.logit(torch.tensor(0.9)))  # nominal mean on y-axis
-        self.raw_nvy = nn.Parameter(inv_softplus(torch.tensor(1.0)))  # nominal variance slope
+        self.raw_nvy = nn.Parameter(
+            torch.logit(torch.tensor(1.0 / self.max_nvy))
+        )  # nominal variance slope
 
     # ------------------------------------------------------------------
     # State definition
@@ -76,8 +81,9 @@ class NormalDegradation(DegModel):
     # ------------------------------------------------------------------
     # Core forward with masking
     # ------------------------------------------------------------------
-    @staticmethod
+    @classmethod
     def forward_with_states(
+        cls,
         s: torch.Tensor,  # [B]
         states: torch.Tensor,  # [K, RP]
         onsets: torch.Tensor,  # [K, 1]
@@ -91,26 +97,37 @@ class NormalDegradation(DegModel):
         raw_dmy, raw_dmx, raw_dmc, raw_dvx, raw_dvs, raw_nmy, raw_nvy = (
             x.unsqueeze(0) for x in states.unbind(-1)
         )
-
+        to = onsets.view(1, -1)  # [1,K]
         # --------------------------------------------------
         # constrain
         # --------------------------------------------------
 
-        dmy = 1e-6 + torch.sigmoid(raw_dmy)  # [1,K]
-        dmx = 1e-6 + F.softplus(raw_dmx)  # [1,K]
-        dmc = F.softplus(raw_dmc)  # [1,K]
+        dmx = to + cls.min_to_gab + F.softplus(raw_dmx)  # [1,K]
+        dmc = cls.min_dmc + F.softplus(raw_dmc)  # [1,K]
+        dmy = torch.sigmoid(raw_dmy)  # [1,K]
+
+        so = dmy * (1.0 - (to / dmx).pow(1.0 / dmc))
 
         dvx = F.softplus(raw_dvx)  # [1,K]
         dvs = F.softplus(raw_dvs)  # [1,K]
 
-        to = onsets.view(1, -1)  # [1,K]
-        ratio = (to / dmx).clamp_max(1.0 - 1e-6)
-        so = dmy * (1.0 - ratio.pow(1.0 / dmc))
+        nmy_min = so + cls.min_so_gab  # ensure nmy > so for numerical stability
+        nmy = nmy_min + (1 - nmy_min) * torch.sigmoid(raw_nmy)  # [1,K]
+        # maximal nominal variance on y-axis
+        nvy = cls.max_nvy * torch.sigmoid(raw_nvy)  # [1,K]
 
-        min_nmy = 0.01 + so
-        nmy = min_nmy + (1 - min_nmy) * torch.sigmoid(raw_nmy)  # [1,K]
-        nvy = F.softplus(raw_nvy)  # [1,K]
-
+        # print(f"dmy: {dmy.min().item():.10f} - {dmy.max().item():.16f}")
+        # print(f"dmx: {dmx.min().item():.16f} - {dmx.max().item():.16f}")
+        # print(f"dmc: {dmc.min().item():.16f} - {dmc.max().item():.16f}")
+        # print(f"dvx: {dvx.min().item():.16f} - {dvx.max().item():.16f}")
+        # print(f"dvs: {dvs.min().item():.16f} - {dvs.max().item():.16f}")
+        # print(f"to: {to.min().item():.16f} - {to.max().item():.16f}")
+        # print(f"so: {so.min().item():.16f} - {so.max().item():.16f}")
+        # print(f"nmy: {nmy.min().item():.16f} - {nmy.max().item():.16f}")
+        # print(f"nvy: {nvy.min().item():.16f} - {nvy.max().item():.16f}")
+        # diff = 1.0 - (to / dmx).pow(1.0 / dmc)
+        # print(f"(1 - (to/dmx)^(1/dmc)): {diff.min().item():.16f} - {diff.max().item():.16f}")
+        # print(f"to/dmx: {(to/dmx).min().item():.16f} - {(to/dmx).max().item():.16f}")
         # --------------------------------------------------
         # compute s_onset
         # --------------------------------------------------
@@ -125,8 +142,8 @@ class NormalDegradation(DegModel):
         mean = torch.zeros(B, K, device=s.device)
         var = torch.zeros(B, K, device=s.device)
 
-        mask_nom = s > so
-        mask_deg = ~mask_nom
+        mask_deg = s < so
+        mask_nom = ~mask_deg
 
         # ==================================================
         # Nominal branch
@@ -156,8 +173,7 @@ class NormalDegradation(DegModel):
 
             dvx_ = dvx.expand(B, K)[mask_deg]
             dvs_ = dvs.expand(B, K)[mask_deg]
-
-            mean[mask_deg] = dmx_ * (1.0 - s_ / dmy_).clamp_min(0.0).pow(dmc_)
+            mean[mask_deg] = dmx_ * (1.0 - s_ / dmy_).pow(dmc_)
             var[mask_deg] = 0.25 + (dvx_ + dvs_ * s_).pow(2)
 
         return torch.stack([mean, var], dim=-1)
