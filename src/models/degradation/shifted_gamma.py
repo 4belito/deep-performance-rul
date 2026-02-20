@@ -4,13 +4,64 @@ import torch
 import torch.distributions as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Gamma
+from torch.distributions import Gamma, TransformedDistribution, constraints
+from torch.distributions.transforms import AffineTransform
 
 from src.helpers.math import inv_softplus
 from src.models.degradation.base import DegModel
 
 
-class GammaDegradation(DegModel):
+class ShiftedGamma(TransformedDistribution):
+    arg_constraints = {
+        "concentration": constraints.positive,
+        "rate": constraints.positive,
+        "shift": constraints.real,
+    }
+
+    def __init__(
+        self,
+        concentration: torch.Tensor,
+        rate: torch.Tensor,
+        shift: torch.Tensor,
+        validate_args: bool | None = None,
+    ):
+        self.concentration = concentration
+        self.rate = rate
+        self.shift = shift
+
+        base_dist = Gamma(
+            concentration=concentration,
+            rate=rate,
+        )
+
+        transform = AffineTransform(loc=shift, scale=1.0)
+
+        super().__init__(
+            base_dist,
+            [transform],
+            validate_args=validate_args,
+        )
+
+    @property
+    def mean(self):
+        return self.shift + self.base_dist.mean
+
+    @property
+    def variance(self):
+        return self.base_dist.variance
+
+    @property
+    def base_mode(self):
+        shape = self.concentration
+        rate = self.rate
+        return torch.where(shape >= 1, (shape - 1) / rate, torch.zeros_like(shape))
+
+    @property
+    def mode(self):
+        return self.shift + self.base_mode
+
+
+class ShiftedGammaDegradation(DegModel):
     max_nvy = 100.0  # avoid numerical issues with (dvx + dvs * so + nvy * (s - so))^2
     min_so_gab = 1e-3  # avoid numerical issues with (nmy - s) / (nmy - so)
     min_to_gab = 1  # mean EOL 1 cycle after degradation onset
@@ -40,6 +91,9 @@ class GammaDegradation(DegModel):
             torch.logit(torch.tensor(1.0 / self.max_nvy))
         )  # nominal variance slope
 
+        # Distribution shift
+        self.raw_loc = nn.Parameter(inv_softplus(torch.tensor(0.1)))  # gamma shift
+
     # ------------------------------------------------------------------
     # State definition
     # ------------------------------------------------------------------
@@ -51,6 +105,7 @@ class GammaDegradation(DegModel):
             "raw_dmc",
             "raw_dvx",
             "raw_dvs",
+            "raw_loc",
             "raw_nmy",
             "raw_nvy",
         ]
@@ -63,13 +118,14 @@ class GammaDegradation(DegModel):
             "raw_dmc": "Degradation mean curvature exponent",
             "raw_dvx": "Degradation variance on time/x-axis",
             "raw_dvs": "Degradation variance slope",
+            "raw_loc": "Gamma time shift",
             "raw_nmy": "Nominal mean on performance/y-axis",
             "raw_nvy": "Nominal variance on performance/y-axis",
         }
 
     @classmethod
     def name(cls) -> str:
-        return "gamma"
+        return "shifted_gamma"
 
     # ------------------------------------------------------------------
     # Core forward with masking
@@ -89,7 +145,7 @@ class GammaDegradation(DegModel):
         # --------------------------------------------------
         # unpack raw params
         # --------------------------------------------------
-        raw_dmy, raw_dmx, raw_dmc, raw_dvx, raw_dvs, raw_nmy, raw_nvy = (
+        raw_dmy, raw_dmx, raw_dmc, raw_dvx, raw_dvs, raw_loc, raw_nmy, raw_nvy = (
             x.unsqueeze(0) for x in states.unbind(-1)
         )
         to = onsets.view(1, -1)  # [1, K]
@@ -98,11 +154,12 @@ class GammaDegradation(DegModel):
         # constrain
         # --------------------------------------------------
 
-        dmx = to + cls.min_to_gab + F.softplus(raw_dmx)  # [1,K]
+        loc = -F.softplus(raw_loc)  # [1,K]
+        dmx = to - loc + cls.min_to_gab + F.softplus(raw_dmx)  # [1,K]
         dmc = cls.min_dmc + F.softplus(raw_dmc)  # [1,K]
         dmy = torch.sigmoid(raw_dmy)  # [1,K]
 
-        ratio = to / dmx
+        ratio = (to - loc) / dmx
         so = dmy * (1.0 - ratio.pow(1.0 / dmc))  # [1, K]
 
         dvx = F.softplus(raw_dvx)  # [1,K]
@@ -137,6 +194,7 @@ class GammaDegradation(DegModel):
             s_ = s[mask_nom]
             so_ = so.expand(B, K)[mask_nom]
             to_ = to.expand(B, K)[mask_nom]
+            loc_ = loc.expand(B, K)[mask_nom]
 
             # parameters for nominal branch
             nmy_ = nmy.expand(B, K)[mask_nom]
@@ -147,7 +205,7 @@ class GammaDegradation(DegModel):
 
             den = (nmy_ - so_).clamp_min(1e-6)
             num = (nmy_ - s_).clamp_min(1e-6)
-            mean[mask_nom] = torch.clamp(to_ * num / den, min=1e-6)
+            mean[mask_nom] = torch.clamp((to_ - loc_) * num / den + loc_, min=1e-6)
             var[mask_nom] = 0.25 + (dvx_ + dvs_ * so_ + nvy_ * (s_ - so_)).pow(2)
 
         # ==================================================
@@ -166,8 +224,9 @@ class GammaDegradation(DegModel):
 
         shape = mean.pow(2) / var.clamp_min(1e-6)
         rate = mean / var.clamp_min(1e-6)
+        shift = loc.expand(B, K)
 
-        return torch.stack([shape, rate], dim=-1)
+        return torch.stack([shape, rate, shift], dim=-1)
 
     # ------------------------------------------------------------------
     # Distribution builder
@@ -176,13 +235,15 @@ class GammaDegradation(DegModel):
     def build_distribution_from_params(params: torch.Tensor) -> dist.Normal:
         shape = params[..., 0]
         rate = params[..., 1]
-        return Gamma(shape, rate)
+        shift = params[..., 2]
+        return ShiftedGamma(shape, rate, shift)
 
 
-class GammaDegradationNLL(nn.Module):
+class ShiftedGammaDegradationNLL(nn.Module):
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         shape_Ts = y_pred[:, [0]]
         rate_Ts = y_pred[:, [1]]
-        dist_s = Gamma(shape_Ts, rate_Ts)
+        shift_Ts = y_pred[:, [2]]
+        dist_s = ShiftedGamma(shape_Ts, rate_Ts, shift_Ts)
         loss = -(dist_s.log_prob(y_true)).mean()
         return loss

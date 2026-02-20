@@ -4,6 +4,7 @@ import torch
 import torch.distributions as dist
 
 from src.models.degradation.base import DegModel
+from src.models.particle_filter.capped_distribution import CappedDistribution
 from src.models.stochastic_process import StochasticProcess
 
 
@@ -81,7 +82,10 @@ class MixtureDegModel(StochasticProcess):
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         params_s = self.forward(s.unsqueeze(1))  # [B, S]
-        return self.build_mixture_distribution(params_s)
+        dist_s = self.build_mixture_distribution(params_s)
+        # if self.cap_value is not None:
+        #     dist_s = CappedDistribution(dist_s, cap=self.cap_value)
+        return dist_s
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
@@ -132,6 +136,22 @@ class MixtureDegModel(StochasticProcess):
             self.weights /= self.weights.sum().clamp_min(1e-12)
         if onsets is not None:
             self.onsets.copy_(onsets)
+
+    @torch.no_grad()
+    def mode(self, s: torch.Tensor, t_grid: torch.Tensor) -> torch.Tensor:
+        """
+        Numerical mode via grid search.
+
+        s: [B]
+        t_grid: [T]  (time grid)
+
+        Returns:
+            mode: [B]
+        """
+        dist_s = self.distribution(s)  # MixtureSameFamily
+        log_pdf = dist_s.log_prob(t_grid.unsqueeze(-1))  # [T, B]
+        idx = log_pdf.argmax(dim=0)  # [B]
+        return t_grid[idx]
 
     @torch.no_grad()
     def mean(self, s: torch.Tensor) -> torch.Tensor:

@@ -27,7 +27,7 @@ class ParticleFilterMLP(nn.Module):
         output_dim = 2 * state_dim + 2  # noise vector + correction vector
 
         layers = []
-        dims = (2, *hidden_dims, output_dim)
+        dims = (5, *hidden_dims, output_dim)
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation())
@@ -58,10 +58,16 @@ class ParticleFilterMLP(nn.Module):
         self,
         t_obs: torch.Tensor,
         s_obs: torch.Tensor,
+        mean_loglik: torch.Tensor,
+        std_loglik: torch.Tensor,
+        ess: torch.Tensor,
     ):
         x = self.tuple_in(
             t_obs,
             s_obs,
+            mean_loglik,
+            std_loglik,
+            ess,
         )
         out = self.forward(x)
         out_mean = out.mean(dim=0)
@@ -71,14 +77,23 @@ class ParticleFilterMLP(nn.Module):
     def tuple_in(
         t_obs,
         s_obs,
+        mean_loglik,
+        std_loglik,
+        ess,
     ):
         t_scaled = t_obs / 100.0
         s_scaled = s_obs
+        mean_scaled = torch.tanh(mean_loglik / 50.0)
+        std_scaled = torch.tanh(std_loglik / 10.0)
+        ess_scaled = ess
 
         return torch.cat(
             [
                 t_scaled.unsqueeze(-1),
                 s_scaled.unsqueeze(-1),
+                mean_scaled.unsqueeze(-1),
+                std_scaled.unsqueeze(-1),
+                ess_scaled.unsqueeze(-1),
             ],
             dim=-1,
         )
@@ -215,21 +230,28 @@ class ParticleFilterModel(nn.Module):
         assert len({type(m) for m in base_models}) == 1, "All base models must be of the same class"
 
         self.net = net
-        self._init_base(base_models, n_particles)
+        base_states, base_onsets = self._extract_parameters(base_models)
 
         # --- noise model ---
         self.noise = DiagonalMahalanobisNoise()
-        self.noise.fit(self.base_states)
+        self.noise.fit(base_states)
 
         # --- mixture model ---
-        self.prior_states = self.base_states.clone()
-        self._init_weights(n_particles)
-        self.mixture = MixtureDegModel.from_particles(
+        self.mixture = self._init_mixture(
             deg_class=type(base_models[0]),
-            states=self.base_states.clone(),
-            weights=self.init_weights.clone(),
-            onsets=self.base_onsets.clone(),
+            base_states=base_states,
+            base_onsets=base_onsets,
+            n_particles=n_particles,
         )
+
+        device = base_states.device
+
+        self.loglik_mean: torch.Tensor
+        self.loglik_std: torch.Tensor
+        self.ess: torch.Tensor
+        self.register_buffer("loglik_mean", torch.tensor(0.0, device=device))
+        self.register_buffer("loglik_std", torch.tensor(0.0, device=device))
+        self.register_buffer("ess", torch.tensor(1.0, device=device))
 
     # --------------------------------------------------------
     # Core PF steps
@@ -241,12 +263,21 @@ class ParticleFilterModel(nn.Module):
         Reset particle filter to its initial prior.
         """
         self.prior_states = self.base_states.clone()
+        weights = torch.full(
+            (self.n_particles,),
+            1.0 / self.n_particles,
+            device=self.base_states.device,
+        )
 
         self.mixture.update(
-            states=self.base_states.clone(),
-            weights=self.init_weights.clone(),
-            onsets=self.base_onsets.clone(),
+            states=self.base_states,
+            weights=weights,
+            onsets=self.onsets,
         )
+
+        self.loglik_mean.zero_()
+        self.loglik_std.zero_()
+        self.ess.fill_(1.0)
 
     def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
         if self.training:
@@ -286,9 +317,18 @@ class ParticleFilterModel(nn.Module):
         s_obs: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
+        B = t_obs.shape[0]
+
+        mean_loglik = self.loglik_mean.expand(B)
+        std_loglik = self.loglik_std.expand(B)
+        ess = self.ess.expand(B)
+
         noise, correction = self.net.tuple_forward_mean(
             t_obs,
             s_obs,
+            mean_loglik,
+            std_loglik,
+            ess,
         )
 
         new_states = self.predict(old_states, noise)
@@ -337,6 +377,7 @@ class ParticleFilterModel(nn.Module):
         comp_dist = self.deg_class.build_distribution_from_params(params)
 
         log_probs = comp_dist.log_prob(t_obs.unsqueeze(1))
+        self.record_controller_statistics(log_probs)
         log_lik = self.weighted_log_likelihood(
             log_probs=log_probs,
             alpha=forget_lik[0],  # scalar, stable
@@ -346,6 +387,21 @@ class ParticleFilterModel(nn.Module):
 
         log_w = correct_lik[0] * log_lik + (correct_prior * log_prior).sum(dim=1)
         return torch.softmax(log_w, dim=0)
+
+    @torch.no_grad()
+    def record_controller_statistics(self, log_probs: torch.Tensor):
+        loglik_mean = log_probs.detach().mean(dim=0)  # [N]
+        loglik_std = log_probs.detach().std(dim=0, unbiased=False)  # [N]
+
+        # Effective Sample Size
+        w = self.weights.detach()
+        ess = 1.0 / (w.pow(2).sum().clamp_min(1e-12))
+        ess = ess / self.n_particles  # normalize to [0,1]
+
+        # expand to match batch shape
+        self.loglik_mean.copy_(loglik_mean.mean().detach())
+        self.loglik_std.copy_(loglik_std.mean().detach())
+        self.ess.copy_(ess.detach())
 
     def weighted_log_likelihood(
         self,
@@ -407,34 +463,41 @@ class ParticleFilterModel(nn.Module):
     def onsets(self) -> torch.Tensor:
         return self.mixture.onsets
 
-    def _init_weights(self, n_particles: int):
-        uniform = torch.full(
-            (n_particles,),
-            1.0 / n_particles,
-            device=self.base_states.device,
-        )
-        self.init_weights: torch.Tensor
-        self.register_buffer("init_weights", uniform)
-
-    def _init_base(
-        self,
-        base_models: list[DegModel],
-        n_particles: int,
-    ):
-        base_n = len(base_models)
-        assert (
-            n_particles % base_n == 0
-        ), "n_particles must be a multiple of the number of base models"
-        repeat = n_particles // base_n
+    @staticmethod
+    def _extract_parameters(base_models: list[DegModel]):
         states = []
         onsets = []
         for m in base_models:
             states.append(m.get_state_vector())
             onsets.append(m.get_onset())
-        base_states = torch.stack(states, dim=0).repeat(repeat, 1)
-        base_onsets = torch.tensor(onsets).repeat(repeat)
+        return torch.stack(states, dim=0), torch.tensor(onsets)
 
+    def _init_mixture(
+        self,
+        deg_class: type[DegModel],
+        base_states: torch.Tensor,
+        base_onsets: torch.Tensor,
+        n_particles: int,
+    ):
+        base_n = base_states.shape[0]
+        assert (
+            n_particles % base_n == 0
+        ), "n_particles must be a multiple of the number of base models"
+
+        # --- initialize particles ---
+        repeat = n_particles // base_n
+        base_states = base_states.repeat(repeat, 1).clone()
+        onsets = base_onsets.repeat(repeat)
         self.base_states: torch.Tensor
-        self.base_onsets: torch.Tensor
-        self.register_buffer("base_states", base_states)
-        self.register_buffer("base_onsets", base_onsets)
+        self.register_buffer("base_states", base_states.clone())
+        self.prior_states = base_states.clone()
+
+        weights = torch.full((n_particles,), 1.0 / n_particles)
+
+        # --- mixture is the SINGLE source of truth ---
+        return MixtureDegModel.from_particles(
+            deg_class=deg_class,
+            states=base_states,
+            weights=weights,
+            onsets=onsets,
+        )

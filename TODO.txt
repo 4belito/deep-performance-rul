@@ -1,5 +1,4 @@
-managed max_life in predicitons
-eval model on particle filter pass to net and deg models
-
-eval in avg predictions
-run oerformance in parallel
+try relaxing model constraint (due to gradiant clipping)
+try with no filter
+change label to remaining observations
+add loss computation on testing/evaluation
