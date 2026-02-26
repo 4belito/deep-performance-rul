@@ -27,7 +27,7 @@ class ParticleFilterMLP(nn.Module):
         output_dim = 2 * state_dim + 2  # noise vector + correction vector
 
         layers = []
-        dims = (3, *hidden_dims, output_dim)
+        dims = (2, *hidden_dims, output_dim)
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation())
@@ -58,12 +58,10 @@ class ParticleFilterMLP(nn.Module):
         self,
         t_obs: torch.Tensor,
         s_obs: torch.Tensor,
-        ess: torch.Tensor,
     ):
         x = self.tuple_in(
             t_obs,
             s_obs,
-            ess,
         )
         out = self.forward(x)
         out_mean = out.mean(dim=0)
@@ -73,17 +71,14 @@ class ParticleFilterMLP(nn.Module):
     def tuple_in(
         t_obs,
         s_obs,
-        ess,
     ):
         t_scaled = t_obs / 100.0
         s_scaled = s_obs
-        ess_scaled = ess
 
         return torch.cat(
             [
                 t_scaled.unsqueeze(-1),
                 s_scaled.unsqueeze(-1),
-                ess_scaled.unsqueeze(-1),
             ],
             dim=-1,
         )
@@ -93,7 +88,7 @@ class ParticleFilterMLP(nn.Module):
         self,
         t: np.ndarray,
         s: np.ndarray,
-        out_dim: int,
+        dim: int,
         ax: plt.Axes | None = None,
         vmin: float | None = None,
         vmax: float | None = None,
@@ -124,8 +119,8 @@ class ParticleFilterMLP(nn.Module):
         # ---- forward (positive outputs) ----
         out = self.forward(x)  # exp to ensure positivity
 
-        Z = out[..., out_dim]
-        label = f"dim: {out_dim}"
+        Z = out[..., dim]
+        label = f"dim: {dim}"
 
         Z = Z.reshape(S.shape).cpu().numpy()
 
@@ -291,12 +286,9 @@ class ParticleFilterModel(nn.Module):
         s_obs: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
-        B = t_obs.shape[0]
-        ess = self.compute_ess()
         noise, correction = self.net.tuple_forward_mean(
             t_obs,
             s_obs,
-            ess.expand(B),
         )
 
         new_states = self.predict(old_states, noise)
@@ -354,14 +346,6 @@ class ParticleFilterModel(nn.Module):
 
         log_w = correct_lik[0] * log_lik + (correct_prior * log_prior).sum(dim=1)
         return torch.softmax(log_w, dim=0)
-
-    @torch.no_grad()
-    def compute_ess(self):
-
-        # Effective Sample Size
-        w = self.weights.detach()
-        ess = 1.0 / (w.pow(2).sum().clamp_min(1e-12))
-        return ess / self.n_particles  # normalize to [0,1]
 
     def weighted_log_likelihood(
         self,

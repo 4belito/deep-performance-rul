@@ -1,4 +1,5 @@
 import abc
+from typing import Literal
 
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
@@ -49,13 +50,19 @@ class StochasticProcess(nn.Module, abc.ABC):
         s: torch.Tensor,
         level: float = 0.95,
         n_samples: int = 4096,
+        pred_stat: Literal["mean", "mode"] = "mean",
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert 0.0 < level < 1.0, "level must be in (0, 1)"
         alpha = 1.0 - level
         lower = self.quantile_mc(s, alpha / 2, n_samples)
         upper = self.quantile_mc(s, 1 - alpha / 2, n_samples)
-        mean = self.distribution(s).mean
-        return lower, mean, upper
+        if pred_stat == "mean":
+            pred = self.distribution(s).mean
+        elif pred_stat == "mode":
+            pred = self.distribution(s).mode
+        else:
+            raise ValueError("pred_stat must be 'mean' or 'mode'")
+        return lower, pred, upper
 
     def _device(self) -> torch.device:
         for p in self.parameters():
@@ -194,11 +201,11 @@ class StochasticProcess(nn.Module, abc.ABC):
         self,
         ax: plt.Axes,
         lower: float,
-        mean: float,
+        pred: float,
         upper: float,
         ymax: float,
         unc_label: str | None = None,
-        mean_label: str | None = None,
+        pred_label: str | None = None,
         legend_loc: str = "upper right",
     ):
         """
@@ -225,7 +232,7 @@ class StochasticProcess(nn.Module, abc.ABC):
 
         # mean
         ax.vlines(
-            mean, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label=mean_label
+            pred, ymin=h_interval, ymax=h_mean, color=self.mean_color, linewidth=2, label=pred_label
         )
 
         # bounds
@@ -238,11 +245,12 @@ class StochasticProcess(nn.Module, abc.ABC):
         self,
         s: NDArray,
         lower: NDArray,
-        mean: NDArray,
+        pred: NDArray,
         upper: NDArray,
         level: float = 0.95,
         ax: plt.Axes | None = None,
         alpha: float = 0.5,
+        pred_label: Literal["mean", "mode"] = "mean",
         title: str = "Uncertainty interval",
         legend_loc: str = "upper right",
     ) -> plt.Axes:
@@ -265,12 +273,12 @@ class StochasticProcess(nn.Module, abc.ABC):
 
         # --- mean ---
         ax.plot(
-            mean,
+            pred,
             s,
             "-",
             color=self.mean_color,
             linewidth=2,
-            label="Mean",
+            label=pred_label,
         )
 
         # --- bounds (explicit, same as original plot) ---
@@ -358,4 +366,5 @@ class StochasticProcess(nn.Module, abc.ABC):
                 frameon=True,
                 framealpha=0.9,
             )
+        return ax
         return ax

@@ -418,9 +418,6 @@ class ParticleFilterModel(nn.Module):
         # time indices: [-B+1, ..., 0]
         idx = torch.arange(B, device=device) - (B - 1)
 
-        # positive decay
-        alpha = F.softplus(alpha)
-
         weights = torch.exp(alpha * idx)  # [B]
         weights = weights / weights.sum()  # normalize
 

@@ -229,6 +229,7 @@ class ParticleFilterModel(nn.Module):
             states=self.base_states.clone(),
             weights=self.init_weights.clone(),
             onsets=self.base_onsets.clone(),
+            init_ss=self.base_init_ss.clone(),
         )
 
     # --------------------------------------------------------
@@ -246,6 +247,7 @@ class ParticleFilterModel(nn.Module):
             states=self.base_states.clone(),
             weights=self.init_weights.clone(),
             onsets=self.base_onsets.clone(),
+            init_ss=self.base_init_ss.clone(),
         )
 
     def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
@@ -263,25 +265,30 @@ class ParticleFilterModel(nn.Module):
     def _core_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
         old_states = self.states.detach()
         onsets = self.onsets.clone().detach()
-        new_states, new_weights = self._core_step(old_states, onsets, t_obs, s_obs)
+        init_ss = self.init_ss.clone().detach()
+        new_states, new_weights = self._core_step(old_states, onsets, init_ss, t_obs, s_obs)
 
         loss_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
             states=new_states,
             weights=new_weights,
             onsets=onsets,
+            init_ss=init_ss,
         )
         return new_states, new_weights, loss_mixture
 
     @torch.no_grad()
     def _core_eval(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
-        new_states, new_weights = self._core_step(self.states, self.onsets, t_obs, s_obs)
+        new_states, new_weights = self._core_step(
+            self.states, self.onsets, self.init_ss, t_obs, s_obs
+        )
         return new_states, new_weights, self.mixture
 
     def _core_step(
         self,
         old_states: torch.Tensor,
         onsets: torch.Tensor,
+        init_ss: torch.Tensor,
         t_obs: torch.Tensor,
         s_obs: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -295,7 +302,7 @@ class ParticleFilterModel(nn.Module):
         if torch.isnan(new_states).any():
             print("NaN after predict()")
             raise RuntimeError("NaN in states")
-        new_weights = self.correct(new_states, onsets, t_obs, s_obs, correction)
+        new_weights = self.correct(new_states, onsets, init_ss, t_obs, s_obs, correction)
         return new_states, new_weights
 
     @torch.no_grad()
@@ -310,6 +317,7 @@ class ParticleFilterModel(nn.Module):
             states=self.states[idx],
             weights=torch.full((n,), 1.0 / n, device=self.weights.device),
             onsets=self.onsets[idx],
+            init_ss=self.init_ss[idx],
         )
         self.prior_states = self.prior_states[idx]
 
@@ -323,6 +331,7 @@ class ParticleFilterModel(nn.Module):
         self,
         states: torch.Tensor,
         onsets: torch.Tensor,
+        init_ss: torch.Tensor,
         t_obs: torch.Tensor,
         s_obs: torch.Tensor,
         correction: torch.Tensor,
@@ -332,8 +341,9 @@ class ParticleFilterModel(nn.Module):
         """
         s_obs = s_obs.unsqueeze(1)  # [B, 1]
         onsets = onsets.unsqueeze(1)
+        init_ss = init_ss.unsqueeze(1)
         correct_prior, correct_lik, forget_lik = self.net.correction_tuple(correction)
-        params = self.deg_class.forward_with_states(s_obs, states, onsets)
+        params = self.deg_class.forward_with_states(s_obs, states, onsets, init_ss)
         comp_dist = self.deg_class.build_distribution_from_params(params)
 
         log_probs = comp_dist.log_prob(t_obs.unsqueeze(1))
@@ -361,9 +371,6 @@ class ParticleFilterModel(nn.Module):
 
         # time indices: [-B+1, ..., 0]
         idx = torch.arange(B, device=device) - (B - 1)
-
-        # positive decay
-        alpha = F.softplus(alpha)
 
         weights = torch.exp(alpha * idx)  # [B]
         weights = weights / weights.sum()  # normalize
@@ -407,6 +414,10 @@ class ParticleFilterModel(nn.Module):
     def onsets(self) -> torch.Tensor:
         return self.mixture.onsets
 
+    @property
+    def init_ss(self) -> torch.Tensor:
+        return self.mixture.init_ss
+
     def _init_weights(self, n_particles: int):
         uniform = torch.full(
             (n_particles,),
@@ -428,13 +439,18 @@ class ParticleFilterModel(nn.Module):
         repeat = n_particles // base_n
         states = []
         onsets = []
+        init_ss = []
         for m in base_models:
             states.append(m.get_state_vector())
             onsets.append(m.get_onset())
+            init_ss.append(m.get_init_s())
         base_states = torch.stack(states, dim=0).repeat(repeat, 1)
         base_onsets = torch.tensor(onsets).repeat(repeat)
+        base_init_ss = torch.tensor(init_ss).repeat(repeat)
 
         self.base_states: torch.Tensor
         self.base_onsets: torch.Tensor
+        self.base_init_ss: torch.Tensor
         self.register_buffer("base_states", base_states)
         self.register_buffer("base_onsets", base_onsets)
+        self.register_buffer("base_init_ss", base_init_ss)

@@ -45,6 +45,11 @@ class GammaDegradation(DegModel):
         # -------------------------
         self.raw_nmy = nn.Parameter(torch.logit(torch.tensor(0.9)))
 
+        # -------------------------
+        # Small displacement of to
+        # -------------------------
+        self.raw_to = nn.Parameter(torch.logit(torch.tensor(0.5)))
+
     @staticmethod
     def get_state_names() -> list[str]:
         return [
@@ -54,6 +59,7 @@ class GammaDegradation(DegModel):
             "raw_dvx",
             "raw_dvs",
             "raw_nmy",
+            "raw_to",
         ]
 
     @staticmethod
@@ -65,11 +71,12 @@ class GammaDegradation(DegModel):
             "raw_dvx": "Variance intercept",
             "raw_dvs": "Variance slope",
             "raw_nmy": "Nominal mean level",
+            "raw_to": "Onset displacement",
         }
 
     @classmethod
     def name(cls) -> str:
-        return "gamma"
+        return f"gamma_flexible_nvcte_onset{cls.onset_left}-{cls.onset_right}"
 
     @classmethod
     def forward_with_states(
@@ -87,6 +94,7 @@ class GammaDegradation(DegModel):
             raw_dvx,
             raw_dvs,
             raw_nmy,
+            raw_to,
         ) = (x.unsqueeze(0) for x in states.unbind(-1))
 
         # -------------------------
@@ -96,8 +104,11 @@ class GammaDegradation(DegModel):
         # -------------------------
         # Learned onset
         # -------------------------
-        to = onsets.view(1, -1)
+        onsets = onsets.view(1, -1)
         init_s = init_s.view(1, -1)
+        lower_to = onsets * (1 - cls.onset_left)
+        higher_to = onsets + (cls.max_life - onsets) * cls.onset_right
+        to = lower_to + (higher_to - lower_to) * torch.sigmoid(raw_to)
 
         # -------------------------
         # Degradation geometry
@@ -109,7 +120,7 @@ class GammaDegradation(DegModel):
 
         A = 1.0 - ratio.pow(1.0 / dmc)
         so = torch.min(init_s, A) * torch.sigmoid(raw_so)
-
+        # 🔥 compute dmy from so
         dmy = so / A.clamp_min(1e-8)
 
         # -------------------------

@@ -60,21 +60,31 @@ class HealthIndexTransformer(BaseEstimator, TransformerMixin):
         q_low: float = 0.01,
         q_high: float = 0.99,
         corr_thresh: float = 0.6,
+        range_thresh: float = 0.6,
     ):
         self.metrics = metrics
         self.cycle_col = cycle_col
         self.q_low = q_low
         self.q_high = q_high
         self.corr_thresh = corr_thresh
+        self.range_thresh = range_thresh
 
+    # --------------------------------------------------
+    # Metrics kept after pruning
+    # --------------------------------------------------
     def get_performances(self):
         check_is_fitted(self, "signs_")
         return [m for m, s in self.signs_.items() if s != 0]
 
+    # --------------------------------------------------
+    # Fit: monotonicity + bounds
+    # --------------------------------------------------
     def fit(self, df: pd.DataFrame, y=None):
         self.signs_ = {}
         self.bounds_ = {}
+        self.range_scores_ = {}
 
+        # 1️⃣ Monotonicity screening
         for m in self.metrics:
             corr = df[m].corr(df[self.cycle_col], method="spearman")
 
@@ -83,11 +93,15 @@ class HealthIndexTransformer(BaseEstimator, TransformerMixin):
             else:
                 self.signs_[m] = np.sign(corr)
 
-        # initial bounds from training data
+        # 2️⃣ Compute normalization bounds
         self.set_bounds(df, self.q_low, self.q_high)
+
         return self
 
-    def set_bounds(self, df: pd.DataFrame, q_low: float = 0.05, q_high: float = 0.95):
+    # --------------------------------------------------
+    # Learn quantile bounds
+    # --------------------------------------------------
+    def set_bounds(self, df: pd.DataFrame, q_low: float, q_high: float):
         check_is_fitted(self, "signs_")
 
         self.bounds_ = {}
@@ -104,28 +118,44 @@ class HealthIndexTransformer(BaseEstimator, TransformerMixin):
             if hi > lo:
                 self.bounds_[m] = (lo, hi)
             else:
-                # invalidate metric if degenerate
                 self.signs_[m] = 0
 
         return self
 
+    # --------------------------------------------------
+    # Transform: normalize + prune by range
+    # --------------------------------------------------
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         check_is_fitted(self, ["signs_", "bounds_"])
 
         out = df.copy()
 
+        # 1️⃣ Normalize
         for m in self.metrics:
             sign = self.signs_.get(m, 0)
 
             if sign == 0:
-                out[m] = 0.0
                 continue
 
             lo, hi = self.bounds_[m]
             r = sign * out[m].to_numpy()
             out[m] = 1.0 - np.clip((r - lo) / (hi - lo), 0.0, 1.0)
-
         return out
+
+    def prune_performances_by_range(self, df_norm: pd.DataFrame):
+        active_metrics = list(self.get_performances())
+
+        for m in active_metrics:
+            unit_ranges = []
+
+            for _, g in df_norm.groupby("unit"):
+                unit_ranges.append(g[m].max() - g[m].min())
+
+            avg_range = np.mean(unit_ranges)
+            self.range_scores_[m] = avg_range  # useful for debugging
+
+            if avg_range < self.range_thresh:
+                self.signs_[m] = 0
 
 
 # ============================================================
@@ -154,6 +184,10 @@ class EstimationPipeline(BaseEstimator, TransformerMixin):
     def get_performances(self):
         check_is_fitted(self, "is_fitted_")
         return self.hi_transformer.get_performances()
+
+    def prune_performances_by_range(self, df_norm: pd.DataFrame):
+        check_is_fitted(self, "is_fitted_")
+        return self.hi_transformer.prune_performances_by_range(df_norm)
 
     def fit(self, df: pd.DataFrame, y=None):
         # --- Stage 1: OC normalization (healthy only)

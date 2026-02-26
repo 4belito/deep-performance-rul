@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ class RULPredictor:
         conf_level: float = 0.95,
         max_life: float = 100.0,
         current_obs: bool = True,
+        pred_stat: Literal["mean", "mode"] = "mode",
     ):
         """
         Parameters
@@ -45,6 +46,7 @@ class RULPredictor:
         self.current_obs = current_obs
         self.t_obs: list[float] = []
         self.s_obs: dict[str, list[float]] = {name: [] for name in pf_models.keys()}
+        self.pred_stat = pred_stat
 
         # --- history (for plotting / video) ---
         self.history_time: list[float] = []
@@ -78,6 +80,7 @@ class RULPredictor:
         self.reset()
 
         for k, t_curr in enumerate(t_data):
+            # print(f"Step {k} - time {t_curr:.2f}")
             self.observe(
                 time=float(t_curr),
                 observations={name: perf[k] for name, perf in s_data.items()},
@@ -142,8 +145,10 @@ class RULPredictor:
         for name, pf in self.pf_models.items():
             device = pf.mixture.states.device
             s0 = torch.tensor([0.0], device=device)
-            lower, mean, upper = pf.mixture.uncertainty_interval(s0, self.conf_level)
-            self.history_component_eol[name].append((lower.item(), mean.item(), upper.item()))
+            lower, pred, upper = pf.mixture.uncertainty_interval(
+                s0, self.conf_level, pred_stat=self.pred_stat
+            )
+            self.history_component_eol[name].append((lower.item(), pred.item(), upper.item()))
 
     # --------------------------------------------------
     # System-level RUL
@@ -154,11 +159,11 @@ class RULPredictor:
         """
         Convert system EOL to system RUL.
         """
-        eol_lower, eol_mean, eol_upper = self.system_eol()
+        eol_lower, eol_pred, eol_upper = self.system_eol()
 
         return (
             max(eol_lower - current_time, 0.0),
-            max(eol_mean - current_time, 0.0),
+            max(eol_pred - current_time, 0.0),
             max(eol_upper - current_time, 0.0),
         )
 
@@ -168,24 +173,24 @@ class RULPredictor:
         Conservative system EOL = min over component EOLs.
         """
         lowers = []
-        means = []
+        preds = []
         uppers = []
 
         for name in self.pf_models.keys():
-            eol_lower, eol_mean, eol_upper = self.history_component_eol[name][-1]
+            eol_lower, eol_pred, eol_upper = self.history_component_eol[name][-1]
             lowers.append(eol_lower)
-            means.append(eol_mean)
+            preds.append(eol_pred)
             uppers.append(eol_upper)
 
         # Conservative aggregation in EOL-space
-        eol_lower, eol_mean, eol_upper = self.eol_aggregation(lowers, means, uppers)
+        eol_lower, eol_pred, eol_upper = self.eol_aggregation(lowers, preds, uppers)
 
         # Physical bounds
         eol_lower = float(np.clip(eol_lower, 0.0, self.max_life))
-        eol_mean = float(np.clip(eol_mean, 0.0, self.max_life))
+        eol_pred = float(np.clip(eol_pred, 0.0, self.max_life))
         eol_upper = float(np.clip(eol_upper, 0.0, self.max_life))
 
-        return eol_lower, eol_mean, eol_upper
+        return eol_lower, eol_pred, eol_upper
 
     @torch.no_grad()
     def eol_aggregation(

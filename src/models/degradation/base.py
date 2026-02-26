@@ -16,7 +16,7 @@ class DegModel(StochasticProcess, abc.ABC):
     - During loading: restored from state_dict
     """
 
-    def __init__(self, onset: float | None = None):
+    def __init__(self, onset: float | None = None, init_s: float | None = None):
         super().__init__()
         self.onset: float
         if onset is not None:
@@ -24,6 +24,13 @@ class DegModel(StochasticProcess, abc.ABC):
         else:
             # placeholder, will be overwritten by load_state_dict
             self.register_buffer("onset", torch.tensor(0.0))
+
+        self.init_s: float
+        if init_s is not None:
+            self.register_buffer("init_s", torch.tensor(float(init_s)))
+        else:
+            # placeholder, will be overwritten by load_state_dict
+            self.register_buffer("init_s", torch.tensor(1.0))
 
     # ---------- REQUIRED API ----------
     @staticmethod
@@ -35,9 +42,9 @@ class DegModel(StochasticProcess, abc.ABC):
         """
         raise NotImplementedError
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
-    def build_distribution_from_params(params: torch.Tensor) -> dist.Distribution:
+    def build_distribution_from_params(cls, params: torch.Tensor) -> dist.Distribution:
         """Build a torch Distribution from params."""
         raise NotImplementedError
 
@@ -48,6 +55,7 @@ class DegModel(StochasticProcess, abc.ABC):
         s: torch.Tensor,
         states: torch.Tensor,  # [..., RP]
         onsets: torch.Tensor,  # [..., 1]
+        init_s: torch.Tensor,  # [..., 1]
     ) -> torch.Tensor:
         """
         s: Tensor of shape [B]
@@ -84,6 +92,9 @@ class DegModel(StochasticProcess, abc.ABC):
     def get_onset(self) -> float:
         return float(self.onset)
 
+    def get_init_s(self) -> float:
+        return float(self.init_s)
+
     def get_state_vector(self) -> torch.Tensor:
         return torch.stack([getattr(self, name) for name in self.get_state_names()])
 
@@ -102,7 +113,8 @@ class DegModel(StochasticProcess, abc.ABC):
         """
         states = self.get_state_vector().unsqueeze(0)  # [1, RP]
         onsets = torch.tensor([[self.onset]])  # [1, 1]
-        output = self.forward_with_states(s, states, onsets)  # [B, 1, DP]
+        init_s = torch.tensor([self.init_s])  # [1]
+        output = self.forward_with_states(s, states, onsets, init_s)  # [B, 1, DP]
         return output[:, 0, :]  # [B, DP]
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:

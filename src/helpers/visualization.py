@@ -1,3 +1,5 @@
+from typing import Literal
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -20,6 +22,7 @@ def create_pf_prediciton_frame(
     title: str = "",
     dist_vmax: float = 0.25,
     dist_plot_mean: bool = False,
+    pred_label: Literal["mean", "mode"] = "mode",
     dist_legend_loc="lower left",
 ) -> plt.Axes:
     # --- render frame --
@@ -46,10 +49,11 @@ def create_pf_prediciton_frame(
     pf.mixture.plot_uncertainty_interval(
         ax=ax,
         lower=pred_interval[0],
-        mean=pred_interval[1],
+        pred=pred_interval[1],
         upper=pred_interval[2],
         ymax=1.0,
         unc_label=f"{int(conf_level * 100)}% unc",
+        pred_label=pred_label,
         legend_loc=dist_legend_loc,
     )
     return ax
@@ -66,6 +70,7 @@ def create_rul_prediction_frame(
     unit: int,
     dist_vmax: float = 0.25,
     dist_plot_mean: bool = False,
+    pred_label: Literal["mean", "mode"] = "mode",
     dist_legend_loc="lower left",
 ):
     assert set(s_data_np) == set(rulpred.pf_models), "PF models and data keys do not match."
@@ -90,6 +95,7 @@ def create_rul_prediction_frame(
             title=f"{name} | unit {unit} | step {step}",
             dist_vmax=dist_vmax,
             dist_plot_mean=dist_plot_mean,
+            pred_label=pred_label,
             dist_legend_loc=dist_legend_loc,
         )
 
@@ -195,4 +201,5 @@ def plot_rul_from_dataframe(
     ax.set_ylim(0, y_max)
     ax.set_xlim(0, t_max)
     if show_legend:
+        ax.legend(loc=legend_loc)
         ax.legend(loc=legend_loc)

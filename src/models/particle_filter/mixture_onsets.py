@@ -4,7 +4,6 @@ import torch
 import torch.distributions as dist
 
 from src.models.degradation.base import DegModel
-from src.models.particle_filter.rul_distirbution import RULDistribution
 from src.models.stochastic_process import StochasticProcess
 
 
@@ -27,14 +26,12 @@ class MixtureDegModel(StochasticProcess):
             dim=0,
         )
         onsets = torch.tensor([c.get_onset() for c in components])
-        init_ss = torch.tensor([c.get_init_s() for c in components])
 
         self._init_from_tensors(
             deg_class=type(components[0]),
             states=states,
             weights=weights,
             onsets=onsets,
-            init_ss=init_ss,
         )
 
     def _init_from_tensors(
@@ -43,7 +40,6 @@ class MixtureDegModel(StochasticProcess):
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
-        init_ss: torch.Tensor | None = None,
     ):
         assert states.ndim == 2
         assert weights.ndim == 1
@@ -54,14 +50,12 @@ class MixtureDegModel(StochasticProcess):
         self.states: torch.Tensor
         self.weights: torch.Tensor
         self.onsets: torch.Tensor
-        self.init_ss: torch.Tensor
         self.register_buffer("states", states)
         self.register_buffer(
             "weights",
             weights / weights.sum().clamp_min(1e-12),
         )
         self.register_buffer("onsets", onsets)
-        self.register_buffer("init_ss", init_ss)
 
     @classmethod
     def from_particles(
@@ -70,7 +64,6 @@ class MixtureDegModel(StochasticProcess):
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor,
-        init_ss: torch.Tensor,
     ) -> MixtureDegModel:
         """
         Build a mixture directly from particle tensors (PF-friendly).
@@ -83,19 +76,15 @@ class MixtureDegModel(StochasticProcess):
             states=states,
             weights=weights,
             onsets=onsets,
-            init_ss=init_ss,
         )
         return obj
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         params_s = self.forward(s.unsqueeze(1))  # [B, S]
-        base_dist_s = self.build_mixture_distribution(params_s)
-        return RULDistribution(
-            base_dist=base_dist_s,
-            cap=100,
-            n_samples=4096,
-            quantile_search=0.999,
-        )
+        dist_s = self.build_mixture_distribution(params_s)
+        # if self.cap_value is not None:
+        #     dist_s = CappedDistribution(dist_s, cap=self.cap_value)
+        return dist_s
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
@@ -107,8 +96,7 @@ class MixtureDegModel(StochasticProcess):
             Shape [B, K, DP]   (batch, component, distribution params)
         """
         onsets = self.onsets.unsqueeze(1)  # [K,1]
-        init_ss = self.init_ss.unsqueeze(1)  # [K,1]
-        return self.deg_class.forward_with_states(s, self.states, onsets, init_ss)
+        return self.deg_class.forward_with_states(s, self.states, onsets)
 
     def build_mixture_distribution(self, params: torch.Tensor) -> dist.Distribution:
         """
@@ -122,7 +110,7 @@ class MixtureDegModel(StochasticProcess):
         # expand mixture weights to [B, K]
         mixture = dist.Categorical(probs=self.weights.expand(B, -1))
 
-        return dist.MixtureSameFamily(mixture, components_dist)
+        return dist.MixtureSameFamily(mixture, components_dist, validate_args=False)
 
     def get_states(self) -> torch.Tensor:
         return self.states
@@ -133,16 +121,12 @@ class MixtureDegModel(StochasticProcess):
     def get_onsets(self) -> torch.Tensor:
         return self.onsets
 
-    def get_init_ss(self) -> torch.Tensor:
-        return self.init_ss
-
     @torch.no_grad()
     def update(
         self,
         states: torch.Tensor | None = None,
         weights: torch.Tensor | None = None,
         onsets: torch.Tensor | None = None,
-        init_ss: torch.Tensor | None = None,
     ):
         if states is not None:
             self.states.copy_(states)
@@ -151,25 +135,22 @@ class MixtureDegModel(StochasticProcess):
             self.weights /= self.weights.sum().clamp_min(1e-12)
         if onsets is not None:
             self.onsets.copy_(onsets)
-        if init_ss is not None:
-            self.init_ss.copy_(init_ss)
 
     @torch.no_grad()
-    def mode(
-        self,
-        s: torch.Tensor,
-        cap: int = 100,
-        n_samples: int = 4096,
-        quantile_search: float = 0.999,
-    ) -> torch.Tensor:
-        dist_s = self.distribution(s)
-        samples = dist_s.sample((n_samples,))  # [N, B]
-        mode = self._mode_from_samples(
-            samples,
-            cap=cap,
-            quantile_search=quantile_search,
-        )
-        return mode
+    def mode(self, s: torch.Tensor, t_grid: torch.Tensor) -> torch.Tensor:
+        """
+        Numerical mode via grid search.
+
+        s: [B]
+        t_grid: [T]  (time grid)
+
+        Returns:
+            mode: [B]
+        """
+        dist_s = self.distribution(s)  # MixtureSameFamily
+        log_pdf = dist_s.log_prob(t_grid.unsqueeze(-1))  # [T, B]
+        idx = log_pdf.argmax(dim=0)  # [B]
+        return t_grid[idx]
 
     @torch.no_grad()
     def mean(self, s: torch.Tensor) -> torch.Tensor:
@@ -191,79 +172,3 @@ class MixtureDegModel(StochasticProcess):
         eol_dist = self.distribution(s=torch.tensor([0.0]))
         mse = ((eol_dist.mean - eol.unsqueeze(0)) ** 2).mean()
         return mse
-
-    @torch.no_grad()
-    def _mode_from_samples(
-        self,
-        samples: torch.Tensor,  # [N, B]
-        cap: int = 100,
-        quantile_search: float = 0.999,
-    ) -> torch.Tensor:
-        """
-        Compute integer-cycle mode from MC samples.
-        Bins centered at integers (width = 1).
-        """
-
-        B = samples.shape[1]
-        device = samples.device
-        modes = torch.zeros(B, device=device)
-
-        # stable upper bound per batch element
-        q_high = torch.quantile(samples, quantile_search, dim=0)
-        max_int = torch.floor(q_high + 0.5).long()
-
-        for b in range(B):
-
-            # integer-centered bins: [k-0.5, k+0.5)
-            samples_int = torch.floor(samples[:, b] + 0.5).long()
-
-            samples_int = samples_int.clamp(min=0, max=max_int[b].item())
-
-            counts = torch.bincount(
-                samples_int,
-                minlength=max_int[b].item() + 1,
-            )
-
-            idx = counts.argmax().item()
-
-            # decision rule
-            modes[b] = min(idx, cap)
-
-        return modes.float()
-
-    @torch.no_grad()
-    def prediction_mc(
-        self,
-        s: torch.Tensor,
-        level: float = 0.95,
-        n_samples: int = 4096,
-        cap: int = 100,
-        quantile_search: float = 0.999,
-    ):
-        """
-        Monte-Carlo prediction using integer-cycle mode.
-        Returns lower bound, mode prediction, upper bound.
-        """
-
-        assert 0.0 < level < 1.0
-
-        dist_s = self.distribution(s)
-        samples = dist_s.sample((n_samples,))  # [N, B]
-
-        # -------------------------
-        # Uncertainty bounds
-        # -------------------------
-        alpha = 1.0 - level
-        lower = torch.quantile(samples, alpha / 2, dim=0)
-        upper = torch.quantile(samples, 1 - alpha / 2, dim=0)
-
-        # -------------------------
-        # Mode from samples
-        # -------------------------
-        mode = self._mode_from_samples(
-            samples,
-            cap=cap,
-            quantile_search=quantile_search,
-        )
-
-        return lower, mode, upper
