@@ -14,6 +14,10 @@ Example of predicted performance evolution and corresponding RUL estimation:
   <p><em>Example RUL prediction</em></p>
 </div>
 
+<div align="center">
+  <img src="https://github.com/4belito/deep-performance-rul/blob/main/assets/rul_pred_example.gif?raw=true" style="width:100%; max-width:900px;" />
+  <p><em>Example RUL prediction</em></p>
+</div>
 
 
 ## Installation
