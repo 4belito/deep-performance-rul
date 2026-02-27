@@ -1,7 +1,7 @@
 [project]
-name = "pf-rul-journal"
+name = "deep-performance-rul"
 version = "0.1.0"
-description = "Add your description here"
+description = "Deep learning framework for performance-based remaining useful life prediction with uncertainty quantification."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
