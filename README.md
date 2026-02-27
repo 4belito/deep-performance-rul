@@ -8,7 +8,7 @@ This repository implements a performance-based RUL prediction framework that pre
 ## Qualitative Results
 
 <div align="center">
-  <img src="https://github.com/4belito/deep-performance-rul/blob/main/assets/rul_pred_example_large.gif?raw=true" width="5200">
+  <img src="https://github.com/4belito/deep-performance-rul/blob/main/assets/rul_pred_example.gif?raw=true" width="5200">
   <p><em>Example RUL prediction</em></p>
 </div>
 
