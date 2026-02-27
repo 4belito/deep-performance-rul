@@ -1,8 +1,21 @@
+"""
+Wrapper around a base RUL distribution with capped statistics and
+discrete mode estimation.
+
+The underlying probability law (log_prob, cdf, sampling) is unchanged.
+This wrapper modifies summary statistics:
+
+- The mean is clipped to [0, cap].
+- The mode is estimated via Monte Carlo sampling and integer
+  histogram search within a high-quantile window.
+- The estimated mode is cached for efficiency.
+"""
+
 import torch
 import torch.distributions as dist
 
 
-class RULDistribution(dist.Distribution):
+class RULDistributionWrapper(dist.Distribution):
 
     arg_constraints = {}
     has_rsample = False

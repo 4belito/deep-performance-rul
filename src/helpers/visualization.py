@@ -1,3 +1,7 @@
+"""
+This file defines helper functions for visualizing the predictions of the particle filter and RUL predictor models.
+"""
+
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -5,13 +9,13 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from src.models.particle_filter.core import ParticleFilterModel
+from src.models.particle_filter.core import ParticleFilter
 from src.models.rul_predictor import RULPredictor
 
 
 def create_pf_prediciton_frame(
     ax: plt.Axes,
-    pf: ParticleFilterModel,
+    pf: ParticleFilter,
     t_grid: NDArray,
     s_grid: NDArray,
     t_data: NDArray,

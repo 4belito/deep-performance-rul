@@ -2,11 +2,11 @@
 Experiment configuration file. This file is imported in all notebooks to ensure that the same data and model configuration is used across all experiments.
 """
 
-from src.models.degradation.gamma_flexible_nvcte import GammaDegradation as DegModel  # noqa: F401
-from src.models.degradation.gamma_flexible_nvcte import GammaDegradationNLL as Loss  # noqa: F401
+from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F401
+from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 # DATA
-DATA_NAME = "DS02"
+DATA_NAME = "DS05"
 
 # ESTIMATION DATA
 FAILED_THRESHOLD = 0.1

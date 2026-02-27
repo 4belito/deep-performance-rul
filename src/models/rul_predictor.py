@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.models.particle_filter.core import ParticleFilterModel
+from src.models.particle_filter.core import ParticleFilter
 
 
 class RULPredictor:
@@ -23,7 +23,7 @@ class RULPredictor:
 
     def __init__(
         self,
-        pf_models: dict[str, ParticleFilterModel],
+        pf_models: dict[str, ParticleFilter],
         conf_level: float = 0.95,
         max_life: float = 100.0,
         current_obs: bool = True,

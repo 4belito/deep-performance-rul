@@ -1,3 +1,5 @@
+"""Operating-condition MLP for operating condition normalization."""
+
 import torch.nn as nn
 
 

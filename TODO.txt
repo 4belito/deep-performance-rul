@@ -1,5 +1,0 @@
-change label to remaining observations (combainied with net input like+ess)
-add avaluaiton unit and do real cross validation
-onset01 is a degmodel parameter not a net parameter
-
-add loss computation on testing/evaluation

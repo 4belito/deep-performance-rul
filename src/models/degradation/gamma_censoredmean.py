@@ -1,16 +1,25 @@
+"""
+Gamma degradation model with a censored mean.
+
+The censored mean limits the influence of non-terminated units in mixture
+models, preventing large expected RUL values from biasing the mixture mean.
+The likelihood remains unchanged.
+
+Experimental variant, not used in the paper results.
+"""
+
 from __future__ import annotations
 
 import torch
-import torch.distributions as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Gamma
 
 from src.helpers.math import inv_softplus
 from src.models.degradation.base import DegModel
+from src.models.distributions.censoredmean_gamma import CensoredMeanGamma
 
 
-class GammaDegradation(DegModel):
+class CensoredMeanGammaDegradation(DegModel):
     min_so_gab = 1e-2
     min_to_gab = 1.0
     min_dmc = 0.001
@@ -76,7 +85,7 @@ class GammaDegradation(DegModel):
 
     @classmethod
     def name(cls) -> str:
-        return f"gamma_flexible_nvcte_onset{cls.onset_left}-{cls.onset_right}"
+        return f"gamma_censoredmean_onset{cls.onset_left}-{cls.onset_right}"
 
     @classmethod
     def forward_with_states(
@@ -203,16 +212,18 @@ class GammaDegradation(DegModel):
 
         return torch.stack([shape, rate], dim=-1)
 
-    @staticmethod
-    def build_distribution_from_params(params: torch.Tensor) -> dist.Gamma:
+    @classmethod
+    def build_distribution_from_params(cls, params: torch.Tensor) -> CensoredMeanGamma:
         shape = params[..., 0]
         rate = params[..., 1]
-        return Gamma(shape, rate)
+        return CensoredMeanGamma(shape, rate, cap=cls.max_life)
 
 
-class GammaDegradationNLL(nn.Module):
+class CensoredMeanGammaDegradationNLL(nn.Module):
+    max_life = CensoredMeanGammaDegradation.max_life
+
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         shape_Ts = y_pred[:, [0]]
         rate_Ts = y_pred[:, [1]]
-        dist_s = Gamma(shape_Ts, rate_Ts)
+        dist_s = CensoredMeanGamma(shape_Ts, rate_Ts, cap=self.max_life)
         return -(dist_s.log_prob(y_true)).mean()

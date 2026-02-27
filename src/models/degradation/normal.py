@@ -1,3 +1,9 @@
+"""
+THis is a normal degradation model with a mean that follows a power law and a variance that grows quadratically with time/performance. The nominal regime has a mean that decreases linearly and a variance that grows quadratically with time/performance.
+
+This is in a experimental stage, and is not part of the results of the paper.
+"""
+
 from __future__ import annotations
 
 import torch
@@ -115,19 +121,6 @@ class NormalDegradation(DegModel):
         nmy = nmy_min + (1 - nmy_min) * torch.sigmoid(raw_nmy)  # [1,K]
         # maximal nominal variance on y-axis
         nvy = cls.max_nvy * torch.sigmoid(raw_nvy)  # [1,K]
-
-        # print(f"dmy: {dmy.min().item():.10f} - {dmy.max().item():.16f}")
-        # print(f"dmx: {dmx.min().item():.16f} - {dmx.max().item():.16f}")
-        # print(f"dmc: {dmc.min().item():.16f} - {dmc.max().item():.16f}")
-        # print(f"dvx: {dvx.min().item():.16f} - {dvx.max().item():.16f}")
-        # print(f"dvs: {dvs.min().item():.16f} - {dvs.max().item():.16f}")
-        # print(f"to: {to.min().item():.16f} - {to.max().item():.16f}")
-        # print(f"so: {so.min().item():.16f} - {so.max().item():.16f}")
-        # print(f"nmy: {nmy.min().item():.16f} - {nmy.max().item():.16f}")
-        # print(f"nvy: {nvy.min().item():.16f} - {nvy.max().item():.16f}")
-        # diff = 1.0 - (to / dmx).pow(1.0 / dmc)
-        # print(f"(1 - (to/dmx)^(1/dmc)): {diff.min().item():.16f} - {diff.max().item():.16f}")
-        # print(f"to/dmx: {(to/dmx).min().item():.16f} - {(to/dmx).max().item():.16f}")
 
         # --------------------------------------------------
         # allocate outputs

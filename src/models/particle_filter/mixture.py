@@ -4,7 +4,7 @@ import torch
 import torch.distributions as dist
 
 from src.models.degradation.base import DegModel
-from src.models.particle_filter.rul_distirbution import RULDistribution
+from src.models.distributions.rul_distirbution import RULDistributionWrapper
 from src.models.stochastic_process import StochasticProcess
 
 
@@ -90,7 +90,7 @@ class MixtureDegModel(StochasticProcess):
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         params_s = self.forward(s.unsqueeze(1))  # [B, S]
         base_dist_s = self.build_mixture_distribution(params_s)
-        return RULDistribution(
+        return RULDistributionWrapper(
             base_dist=base_dist_s,
             cap=100,
             n_samples=4096,

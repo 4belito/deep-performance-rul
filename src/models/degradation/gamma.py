@@ -1,3 +1,20 @@
+"""
+Gamma degradation model with a piecewise mean structure and state-dependent variance.
+
+The model defines two regimes separated by a learned degradation boundary s0:
+
+- Nominal regime:
+  The mean decreases linearly with the health variable s,
+  and the variance grows quadratically with s.
+
+- Degradation regime:
+  The mean follows a power-law relationship with s,
+  and the variance also grows quadratically with s.
+
+The resulting mean and variance are converted to Gamma shape–rate
+parameters, enabling probabilistic modeling of the degradation process.
+"""
+
 from __future__ import annotations
 
 import torch
@@ -45,6 +62,11 @@ class GammaDegradation(DegModel):
         # -------------------------
         self.raw_nmy = nn.Parameter(torch.logit(torch.tensor(0.9)))
 
+        # -------------------------
+        # Small displacement of to
+        # -------------------------
+        self.raw_to = nn.Parameter(torch.logit(torch.tensor(0.5)))
+
     @staticmethod
     def get_state_names() -> list[str]:
         return [
@@ -54,6 +76,7 @@ class GammaDegradation(DegModel):
             "raw_dvx",
             "raw_dvs",
             "raw_nmy",
+            "raw_to",
         ]
 
     @staticmethod
@@ -65,11 +88,12 @@ class GammaDegradation(DegModel):
             "raw_dvx": "Variance intercept",
             "raw_dvs": "Variance slope",
             "raw_nmy": "Nominal mean level",
+            "raw_to": "Onset displacement",
         }
 
     @classmethod
     def name(cls) -> str:
-        return "gamma"
+        return f"gamma_onset{cls.onset_left}-{cls.onset_right}"
 
     @classmethod
     def forward_with_states(
@@ -87,17 +111,17 @@ class GammaDegradation(DegModel):
             raw_dvx,
             raw_dvs,
             raw_nmy,
+            raw_to,
         ) = (x.unsqueeze(0) for x in states.unbind(-1))
-
-        # -------------------------
-        # Learn s0 in (0,1)
-        # -------------------------
 
         # -------------------------
         # Learned onset
         # -------------------------
-        to = onsets.view(1, -1)
+        onsets = onsets.view(1, -1)
         init_s = init_s.view(1, -1)
+        lower_to = onsets * (1 - cls.onset_left)
+        higher_to = onsets + (cls.max_life - onsets) * cls.onset_right
+        to = lower_to + (higher_to - lower_to) * torch.sigmoid(raw_to)
 
         # -------------------------
         # Degradation geometry
@@ -109,7 +133,6 @@ class GammaDegradation(DegModel):
 
         A = 1.0 - ratio.pow(1.0 / dmc)
         so = torch.min(init_s, A) * torch.sigmoid(raw_so)
-
         dmy = so / A.clamp_min(1e-8)
 
         # -------------------------
@@ -121,19 +144,6 @@ class GammaDegradation(DegModel):
         nmy_min = so + cls.min_so_gab
         nmy = nmy_min + (1 - nmy_min) * torch.sigmoid(raw_nmy)
 
-        # print(f"dmy: {dmy.min().item():.10f} - {dmy.max().item():.16f}")
-        # print(f"dmx: {dmx.min().item():.16f} - {dmx.max().item():.16f}")
-        # print(f"dmc: {dmc.min().item():.16f} - {dmc.max().item():.16f}")
-        # print(f"dvx: {dvx.min().item():.16f} - {dvx.max().item():.16f}")
-        # print(f"dvs: {dvs.min().item():.16f} - {dvs.max().item():.16f}")
-        # print(f"to: {to.min().item():.16f} - {to.max().item():.16f}")
-        # print(f"so: {so.min().item():.16f} - {so.max().item():.16f}")
-        # print(f"nmy: {nmy.min().item():.16f} - {nmy.max().item():.16f}")
-        # print(f"ratio: {ratio.min().item():.16f} - {ratio.max().item():.16f}")
-        # diff = 1.0 - (to / dmx).pow(1.0 / dmc)
-        # print(f"(1 - (to/dmx)^(1/dmc)): {diff.min().item():.16f} - {diff.max().item():.16f}")
-        # print(f"to/dmx: {(to/dmx).min().item():.16f} - {(to/dmx).max().item():.16f}")
-
         # -------------------------
         # Allocate
         # -------------------------
@@ -144,6 +154,9 @@ class GammaDegradation(DegModel):
         mean = torch.zeros(B, K, device=s.device)
         var = torch.zeros(B, K, device=s.device)
 
+        # -------------------------
+        # Branching logic
+        # -------------------------
         mask_null = s > init_s
         mask_nom = (s > so) & (s <= init_s)
         mask_deg = s <= so
@@ -184,9 +197,15 @@ class GammaDegradation(DegModel):
 
             var[mask_deg] = (0.25 + dvx_ + dvs_ * s_).pow(2)
 
+        # -------------------------
+        # Null branch
+        # -------------------------
         mean = torch.where(mask_null, cls.null_mean_value, mean)
         var = torch.where(mask_null, cls.null_var_value, var)
 
+        # -------------------------
+        # Convert to shape-rate parameters
+        # -------------------------
         shape = mean.pow(2) / var
         rate = mean / var
 

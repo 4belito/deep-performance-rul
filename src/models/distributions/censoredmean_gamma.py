@@ -1,6 +1,22 @@
+"""
+Gamma distribution with censored mean.
+
+This wrapper replaces the reported mean of a Gamma distribution with the
+censored expectation:
+
+    T* = min(T, cap)
+
+The underlying Gamma distribution (log_prob, cdf, sampling) remains unchanged.
+Only the mean is modified.
+
+This is used in mixture models to prevent large expected RUL values
+(from non-terminated units) from dominating and biasing the mixture mean.
+The censoring reflects the known maximum life of the system.
+"""
+
 import torch
 import torch.distributions as dist
-from torch.distributions import constraints
+from torch.distributions import Gamma
 from torch.special import gammainc
 
 
@@ -17,14 +33,13 @@ class CensoredMeanGamma(dist.Distribution):
     arg_constraints = {}
     has_rsample = False
 
-    def __init__(self, base_gamma: dist.Gamma, cap: float):
-        self.base_dist = base_gamma
+    def __init__(self, shape, rate, cap: float):
+        self.base_dist = Gamma(shape, rate)
         self.cap = cap
 
         super().__init__(
-            batch_shape=base_gamma.batch_shape,
-            event_shape=base_gamma.event_shape,
-            validate_args=False,
+            batch_shape=self.base_dist.batch_shape,
+            event_shape=self.base_dist.event_shape,
         )
 
     # Delegate everything except mean
@@ -61,7 +76,3 @@ class CensoredMeanGamma(dist.Distribution):
         mean = (shape / rate) * P_alpha1 + self.cap * (1 - P_alpha)
 
         return mean
-
-    @property
-    def support(self):
-        return self.base_dist.support
