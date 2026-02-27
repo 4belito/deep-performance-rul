@@ -9,9 +9,10 @@ This repository implements a performance-based RUL prediction framework that pre
 
 Example of predicted performance evolution and corresponding RUL estimation:
 
-<p align="center">
-  <img src="assets/rul_pred_example.gif" width="800">
-</p>
+<div align="center">
+  <img src="assets/rul_pred_example.gif" style="width:100%; max-width:900px;" />
+  <p><em>Example RUL prediction</em></p>
+</div>
 
 
 
