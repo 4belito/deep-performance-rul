@@ -7,10 +7,8 @@ This repository implements a performance-based RUL prediction framework that pre
 
 ## Qualitative Results
 
-Example of predicted performance evolution and corresponding RUL estimation:
-
 <div align="center">
-  <img src="https://github.com/4belito/deep-performance-rul/blob/main/assets/rul_pred_example.gif?raw=true" style="width:100%; max-width:900px;" />
+  <img src="https://github.com/4belito/deep-performance-rul/blob/main/assets/rul_pred_example.gif?raw=true" style="width:100%; max-width:1200px;" />
   <p><em>Example RUL prediction</em></p>
 </div>
 
