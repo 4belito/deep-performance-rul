@@ -153,9 +153,3 @@ class ParticleFilterMLP(nn.Module):
         ax.set_title(title)
 
         return ax
-        return ax
-        return ax
-        return ax
-        return ax
-        return ax
-        return ax

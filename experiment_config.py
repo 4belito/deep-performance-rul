@@ -6,7 +6,7 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 # DATA
-DATA_NAME = "DS05"
+DATA_NAME = "DS03"
 
 # ESTIMATION DATA
 FAILED_THRESHOLD = 0.1
@@ -20,6 +20,7 @@ FILT_SMOOTH_STRENGTH = 20.0
 
 
 # Network Training
+N_PARTICLES = 2000
 USE_LASTOBS_LOSS = True
 SEED = 42
 EMA_BETA = 0.9

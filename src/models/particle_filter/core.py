@@ -283,9 +283,7 @@ class ParticleFilter(nn.Module):
         n_particles: int,
     ):
         base_n = len(base_models)
-        assert (
-            n_particles % base_n == 0
-        ), "n_particles must be a multiple of the number of base models"
+        assert n_particles >= base_n, "n_particles must be >= number of base models"
         repeat = n_particles // base_n
         states = []
         onsets = []
@@ -304,9 +302,49 @@ class ParticleFilter(nn.Module):
         self.register_buffer("base_states", base_states)
         self.register_buffer("base_onsets", base_onsets)
         self.register_buffer("base_init_ss", base_init_ss)
+
+    def _init_base(
+        self,
+        base_models: list[DegModel],
+        n_particles: int,
+    ):
+        base_n = len(base_models)
+        allocation = self._balanced_allocation(n_particles, base_n)
+
+        base_states, base_onsets, base_init_ss = self._expand_base_models(base_models, allocation)
+
+        self.base_states: torch.Tensor
+        self.base_onsets: torch.Tensor
+        self.base_init_ss: torch.Tensor
+
+        self.register_buffer("base_states", base_states)
+        self.register_buffer("base_onsets", base_onsets)
         self.register_buffer("base_init_ss", base_init_ss)
-        self.register_buffer("base_init_ss", base_init_ss)
-        self.register_buffer("base_init_ss", base_init_ss)
-        self.register_buffer("base_init_ss", base_init_ss)
-        self.register_buffer("base_init_ss", base_init_ss)
-        self.register_buffer("base_init_ss", base_init_ss)
+
+    def _balanced_allocation(self, n_particles: int, base_n: int) -> list[int]:
+        assert n_particles >= base_n
+
+        base_repeat = n_particles // base_n
+        remainder = n_particles % base_n
+
+        return [base_repeat + (1 if i < remainder else 0) for i in range(base_n)]
+
+    def _expand_base_models(
+        self,
+        base_models: list[DegModel],
+        allocation: list[int],
+    ):
+        states = []
+        onsets = []
+        init_ss = []
+
+        for m, repeat in zip(base_models, allocation):
+            states.append(m.get_state_vector().unsqueeze(0).repeat(repeat, 1))
+            onsets.append(torch.full((repeat,), m.get_onset()))
+            init_ss.append(torch.full((repeat,), m.get_init_s()))
+
+        return (
+            torch.cat(states, dim=0),
+            torch.cat(onsets),
+            torch.cat(init_ss),
+        )
