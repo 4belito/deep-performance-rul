@@ -6,7 +6,7 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 # DATA
-DATA_NAME = "DS03"
+DATA_NAME = "DS01"
 
 # ESTIMATION DATA
 FAILED_THRESHOLD = 0.1
