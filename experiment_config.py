@@ -6,7 +6,7 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 # DATA
-DATA_NAME = "DS01"
+DATA_NAME = "DS03"
 
 # ESTIMATION DATA
 FAILED_THRESHOLD = 0.1
@@ -23,11 +23,14 @@ FILT_SMOOTH_STRENGTH = 20.0
 N_PARTICLES = 2000
 USE_LASTOBS_LOSS = True
 SEED = 42
-EMA_BETA = 0.9
+# EMA_BETA = 0.9
+AVERSION = 0.5
+GRADIENT_CLIP = 3.0
+WEIGHT_DECAY = 0
 
 # Network Model
 PREDICTION_START_IDX = 0
-HIDDEN_DIMS = [256, 256, 128, 64, 32]  # [16]  #
+HIDDEN_DIMS = [256, 256, 128, 64, 32]  # [128, 64, 32]  # [256, 256, 128, 64, 32]  # [16]  #
 LEAKY_SLOPE = 0.05
 
 # EXPERIMENT
@@ -39,7 +42,7 @@ FILTERED_SUFFIX = f"_filtered_n{FILT_NOISE_MEM}_s{FILT_SMOOTH_STRENGTH}" if FILT
 PFNET_NAME = (
     "net"
     + "x".join([str(h) for h in HIDDEN_DIMS])
-    + f"leaky{LEAKY_SLOPE}_emaloss{EMA_BETA}_init{PREDICTION_START_IDX}"  # {FILTERED_SUFFIX}
+    + f"leaky{LEAKY_SLOPE}_gradclip{GRADIENT_CLIP}_wdecay{WEIGHT_DECAY}_riskSL{AVERSION}_test"  # {FILTERED_SUFFIX}
 )
 
 ESTIMATION_NAME = f"estimation_thr{FAILED_THRESHOLD}_q{Q_LOW}-{Q_HIGH}" + FILTERED_SUFFIX

@@ -102,15 +102,22 @@ class ParticleFilter(nn.Module):
 
     def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
         if self.training:
-            new_s, new_w, mix = self._core_train(t_obs, s_obs)
+            new_s, new_w, loss_mix = self._core_train(t_obs, s_obs)
+
+            # Update internal PF state (non-diff)
+            with torch.no_grad():
+                self.mixture.update(states=new_s, weights=new_w)
+                self.resample()
+
+            return loss_mix  # ← differentiable
+
         else:
-            new_s, new_w, mix = self._core_eval(t_obs, s_obs)
-        self.mixture.update(
-            states=new_s,
-            weights=new_w,
-        )
-        self.resample()
-        return mix
+            new_s, new_w = self._core_eval(t_obs, s_obs)
+
+            self.mixture.update(states=new_s, weights=new_w)
+            self.resample()
+
+            return self.mixture  # ← updated mixture
 
     def _core_train(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
         old_states = self.states.detach()
@@ -132,7 +139,7 @@ class ParticleFilter(nn.Module):
         new_states, new_weights = self._core_step(
             self.states, self.onsets, self.init_ss, t_obs, s_obs
         )
-        return new_states, new_weights, self.mixture
+        return new_states, new_weights
 
     def _core_step(
         self,
@@ -276,32 +283,6 @@ class ParticleFilter(nn.Module):
         )
         self.init_weights: torch.Tensor
         self.register_buffer("init_weights", uniform)
-
-    def _init_base(
-        self,
-        base_models: list[DegModel],
-        n_particles: int,
-    ):
-        base_n = len(base_models)
-        assert n_particles >= base_n, "n_particles must be >= number of base models"
-        repeat = n_particles // base_n
-        states = []
-        onsets = []
-        init_ss = []
-        for m in base_models:
-            states.append(m.get_state_vector())
-            onsets.append(m.get_onset())
-            init_ss.append(m.get_init_s())
-        base_states = torch.stack(states, dim=0).repeat(repeat, 1)
-        base_onsets = torch.tensor(onsets).repeat(repeat)
-        base_init_ss = torch.tensor(init_ss).repeat(repeat)
-
-        self.base_states: torch.Tensor
-        self.base_onsets: torch.Tensor
-        self.base_init_ss: torch.Tensor
-        self.register_buffer("base_states", base_states)
-        self.register_buffer("base_onsets", base_onsets)
-        self.register_buffer("base_init_ss", base_init_ss)
 
     def _init_base(
         self,
