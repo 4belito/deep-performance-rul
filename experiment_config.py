@@ -8,11 +8,11 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 SEED = 42
-N_REP = 10
+N_REP = 3
 
 
 # DATA
-DATA_NAME = "DS03"
+DATA_NAME = "DS01"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 
