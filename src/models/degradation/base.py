@@ -1,6 +1,5 @@
 import abc
 
-import matplotlib.pyplot as plt
 import torch
 import torch.distributions as dist
 
@@ -16,21 +15,11 @@ class DegModel(StochasticProcess, abc.ABC):
     - During loading: restored from state_dict
     """
 
-    def __init__(self, onset: float | None = None, init_s: float | None = None):
+    def __init__(self, aux: tuple[float, ...]):
         super().__init__()
-        self.onset: float
-        if onset is not None:
-            self.register_buffer("onset", torch.tensor(float(onset)))
-        else:
-            # placeholder, will be overwritten by load_state_dict
-            self.register_buffer("onset", torch.tensor(0.0))
-
-        self.init_s: float
-        if init_s is not None:
-            self.register_buffer("init_s", torch.tensor(float(init_s)))
-        else:
-            # placeholder, will be overwritten by load_state_dict
-            self.register_buffer("init_s", torch.tensor(1.0))
+        aux_tensor = torch.tensor(aux, dtype=torch.float32)
+        self.aux: torch.Tensor
+        self.register_buffer("aux", aux_tensor)
 
     # ---------- REQUIRED API ----------
     @staticmethod
@@ -89,11 +78,8 @@ class DegModel(StochasticProcess, abc.ABC):
     def state_dim(cls) -> int:
         return len(cls.get_state_names())
 
-    def get_onset(self) -> float:
-        return float(self.onset)
-
-    def get_init_s(self) -> float:
-        return float(self.init_s)
+    def get_aux_vector(self) -> float:
+        return self.aux
 
     def get_state_vector(self) -> torch.Tensor:
         return torch.stack([getattr(self, name) for name in self.get_state_names()])
@@ -112,15 +98,9 @@ class DegModel(StochasticProcess, abc.ABC):
         returns: Tensor of shape [B, DP]
         """
         states = self.get_state_vector().unsqueeze(0)  # [1, RP]
-        onsets = torch.tensor([[self.onset]])  # [1, 1]
-        init_s = torch.tensor([self.init_s])  # [1]
-        output = self.forward_with_states(s, states, onsets, init_s)  # [B, 1, DP]
+        output = self.forward_with_states(s, states, self.aux)  # [B, 1, DP]
         return output[:, 0, :]  # [B, DP]
 
     def distribution(self, s: torch.Tensor) -> dist.Distribution:
         params_s = self.forward(s.unsqueeze(1))  # [B, DP]
         return self.build_distribution_from_params(params_s)
-
-    def _post_plot(self, ax: plt.Axes):
-        onset = self.onset
-        ax.axvline(x=onset, linestyle="--", color="#4CC9F0", label="onset")

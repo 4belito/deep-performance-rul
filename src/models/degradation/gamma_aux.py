@@ -31,14 +31,14 @@ class GammaDegradation(DegModel):
     min_so_gab = 1e-2
     min_to_gab = 1.0
     min_dmc = 0.001
-    onset_left = 0.2
-    onset_right = 0.2
+    onset_left = 1
+    onset_right = 1
     max_life = 100.0
     null_mean_value = 1e-6
     null_var_value = 1e-6
 
-    def __init__(self, onset: float | None = None, init_s: float | None = None):
-        super().__init__(onset=onset, init_s=init_s)
+    def __init__(self, aux):
+        super().__init__(aux)
 
         # -------------------------
         # Learn s0 directly in (0,1)
@@ -91,6 +91,17 @@ class GammaDegradation(DegModel):
             "raw_to": "Onset displacement",
         }
 
+    @staticmethod
+    def get_aux_names() -> list[str]:
+        return ["onsets", "init_s"]
+
+    @staticmethod
+    def get_aux_semantics() -> dict[str, str]:
+        return {
+            "onsets": "Onset time of degradation",
+            "init_s": "Initial health state",
+        }
+
     @classmethod
     def name(cls) -> str:
         return f"gamma_onset{cls.onset_left}-{cls.onset_right}"
@@ -100,8 +111,7 @@ class GammaDegradation(DegModel):
         cls,
         s: torch.Tensor,
         states: torch.Tensor,
-        onsets: torch.Tensor,
-        init_s: torch.Tensor,
+        aux: torch.Tensor,
     ) -> torch.Tensor:
 
         (
@@ -117,8 +127,10 @@ class GammaDegradation(DegModel):
         # -------------------------
         # Learned onset
         # -------------------------
-        onsets = onsets.view(1, -1)
-        init_s = init_s.view(1, -1)
+
+        onsets, init_s = aux.t()
+        onsets = onsets.unsqueeze(0)
+        init_s = init_s.unsqueeze(0)
         lower_to = onsets * (1 - cls.onset_left)
         higher_to = onsets + (cls.max_life - onsets) * cls.onset_right
         to = lower_to + (higher_to - lower_to) * torch.sigmoid(raw_to)

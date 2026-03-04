@@ -4,15 +4,15 @@ Experiment configuration file. This file is imported in all notebooks to ensure 
 
 from pathlib import Path
 
-from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F401
-from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
+from src.models.degradation.gamma_aux import GammaDegradation as DegModel  # noqa: F401
+from src.models.degradation.gamma_aux import GammaDegradationNLL as Loss  # noqa: F401
 
 SEED = 42
 N_REP = 3
 
 
 # DATA
-DATA_NAME = "DS01"
+DATA_NAME = "DS03"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 
@@ -76,5 +76,29 @@ PFNET_DIR = DEGR_MODEL_DIR / PFNET_NAME
 
 # RESULTS
 UNCERTAINTY_LEVEL = 0.95
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
+
+PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
 
 PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"
