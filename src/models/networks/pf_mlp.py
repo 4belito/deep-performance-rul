@@ -18,7 +18,7 @@ class ParticleFilterMLP(nn.Module):
         self,
         state_dim: int,
         hidden_dims: tuple[int, ...],
-        activation: Callable[[], nn.Module] = lambda: nn.ReLU(),
+        activation: Callable[[], nn.Module],
     ):
         super().__init__()
 
