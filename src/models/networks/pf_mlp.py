@@ -23,7 +23,7 @@ class ParticleFilterMLP(nn.Module):
         super().__init__()
 
         self.state_dim = state_dim
-        output_dim = 2 * state_dim + 2  # noise vector + correction vector
+        output_dim = 2 * state_dim + 1  # noise vector + correction vector
 
         layers = []
         dims = (2, *hidden_dims, output_dim)
@@ -44,9 +44,10 @@ class ParticleFilterMLP(nn.Module):
 
     def correction_tuple(self, x: torch.Tensor):
         correct_prior = x[..., : self.state_dim]
-        correct_lik = x[..., [-2]]
-        forget_lik = x[..., [-1]]
-        return correct_prior, correct_lik, forget_lik
+        correct_lik = x[..., [-1]]
+        # correct_lik = x[..., [-2]]
+        # forget_lik = x[..., [-1]]
+        return correct_prior, correct_lik  # , forget_lik
 
     def tuple_forward(self, t_obs: torch.Tensor, s_obs: torch.Tensor):
         x = self.tuple_in(t_obs, s_obs)

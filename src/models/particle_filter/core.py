@@ -154,12 +154,11 @@ class ParticleFilter(nn.Module):
             t_obs,
             s_obs,
         )
-
-        new_states = self.predict(old_states, noise)
-        if torch.isnan(new_states).any():
-            print("NaN after predict()")
-            raise RuntimeError("NaN in states")
+        new_states = self.propagate(old_states, noise)
         new_weights = self.correct(new_states, onsets, init_ss, t_obs, s_obs, correction)
+
+        # ess = 1.0 / torch.sum(new_weights**2)
+        # print(f"{int(t_obs.item())}-ESS: {ess:.1f}/{len(new_weights)} ({ess/len(new_weights):.2f})")
         return new_states, new_weights
 
     @torch.no_grad()
@@ -178,10 +177,7 @@ class ParticleFilter(nn.Module):
         )
         self.prior_states = self.prior_states[idx]
 
-    def predict(self, states: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
-        """
-        PURE prediction (no mutation, differentiable).
-        """
+    def propagate(self, states: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
         return self.noise(states, scale=noise)
 
     def correct(
@@ -199,40 +195,15 @@ class ParticleFilter(nn.Module):
         s_obs = s_obs.unsqueeze(1)  # [B, 1]
         onsets = onsets.unsqueeze(1)
         init_ss = init_ss.unsqueeze(1)
-        correct_prior, correct_lik, forget_lik = self.net.correction_tuple(correction)
+        correct_prior, correct_lik = self.net.correction_tuple(correction)  # , forget_lik
         params = self.deg_class.forward_with_states(s_obs, states, onsets, init_ss)
         comp_dist = self.deg_class.build_distribution_from_params(params)
 
-        log_probs = comp_dist.log_prob(t_obs.unsqueeze(1))
-        log_lik = self.weighted_log_likelihood(
-            log_probs=log_probs,
-            alpha=forget_lik[0],  # scalar, stable
-        )
-        # log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
+        log_lik = comp_dist.log_prob(t_obs.unsqueeze(1)).mean(dim=0)
         log_prior = self.trajectory_log_prior(states)
 
         log_w = correct_lik[0] * log_lik + (correct_prior * log_prior).sum(dim=1)
         return torch.softmax(log_w, dim=0)
-
-    def weighted_log_likelihood(
-        self,
-        log_probs: torch.Tensor,  # [B, N]
-        alpha: torch.Tensor,  # [1]
-    ):
-        """
-        Exponentially weighted average over time.
-        More recent observations get higher weight.
-        """
-        B = log_probs.shape[0]
-        device = log_probs.device
-
-        # time indices: [-B+1, ..., 0]
-        idx = torch.arange(B, device=device) - (B - 1)
-
-        weights = torch.exp(alpha * idx)  # [B]
-        weights = weights / weights.sum()  # normalize
-
-        return (weights[:, None] * log_probs).sum(dim=0)
 
     def trajectory_log_prior(self, states: torch.Tensor):
         """

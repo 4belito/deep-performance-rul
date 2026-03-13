@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 
@@ -17,13 +18,11 @@ def to_float32(x: np.ndarray) -> np.ndarray:
 class OperCondResidualAggregator(BaseEstimator, TransformerMixin):
     def __init__(
         self,
-        oc_pipe: Pipeline,
         opcond_cols: list[str],
         perform_cols: list[str],
         unit_col: str = "unit",
         cycle_col: str = "cycle",
     ):
-        self.oc_pipe = oc_pipe
         self.opcond_cols = opcond_cols
         self.perform_cols = perform_cols
         self.unit_col = unit_col
@@ -32,11 +31,14 @@ class OperCondResidualAggregator(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         return self
 
-    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        check_is_fitted(self.oc_pipe)
+    def transform(
+        self, df: pd.DataFrame, oc_pipe: Pipeline, y_scaler: StandardScaler
+    ) -> pd.DataFrame:
+        check_is_fitted(oc_pipe)
 
         X = df[self.opcond_cols]
-        perf_nom = self.oc_pipe.predict(X)
+        perf_nom_scaled = oc_pipe.predict(X)
+        perf_nom = y_scaler.inverse_transform(perf_nom_scaled)
 
         res = pd.DataFrame(
             df[self.perform_cols].values - perf_nom,
@@ -55,107 +57,73 @@ class OperCondResidualAggregator(BaseEstimator, TransformerMixin):
 class HealthIndexTransformer(BaseEstimator, TransformerMixin):
     def __init__(
         self,
-        metrics: list[str],
+        performs: list[str],
         cycle_col: str = "cycle",
-        q_low: float = 0.01,
-        q_high: float = 0.99,
-        corr_thresh: float = 0.6,
-        range_thresh: float = 0.6,
+        nom_margin: float = 0.01,
+        eol_margin: float = 0.01,
     ):
-        self.metrics = metrics
+        self.performs = performs
         self.cycle_col = cycle_col
-        self.q_low = q_low
-        self.q_high = q_high
-        self.corr_thresh = corr_thresh
-        self.range_thresh = range_thresh
-
-    # --------------------------------------------------
-    # Metrics kept after pruning
-    # --------------------------------------------------
-    def get_performances(self):
-        check_is_fitted(self, "signs_")
-        return [m for m, s in self.signs_.items() if s != 0]
+        self.eol_margin = eol_margin
+        self.nom_margin = nom_margin
 
     # --------------------------------------------------
     # Fit: monotonicity + bounds
     # --------------------------------------------------
     def fit(self, df: pd.DataFrame, y=None):
-        self.signs_ = {}
         self.bounds_ = {}
+        self.signs_ = {}
         self.range_scores_ = {}
+        self.corr_scores_ = {}
 
         # 1️⃣ Monotonicity screening
-        for m in self.metrics:
+        df_norm = df.copy()
+        for m in self.performs:
             corr = df[m].corr(df[self.cycle_col], method="spearman")
-
-            if abs(corr) < self.corr_thresh:
-                self.signs_[m] = 0
-            else:
-                self.signs_[m] = np.sign(corr)
-
-        # 2️⃣ Compute normalization bounds
-        self.set_bounds(df, self.q_low, self.q_high)
-
-        return self
-
-    # --------------------------------------------------
-    # Learn quantile bounds
-    # --------------------------------------------------
-    def set_bounds(self, df: pd.DataFrame, q_low: float, q_high: float):
-        check_is_fitted(self, "signs_")
-
-        self.bounds_ = {}
-
-        for m in self.metrics:
-            sign = self.signs_.get(m, 0)
-            if sign == 0:
+            sign = np.sign(corr)
+            r = np.sign(corr) * df[m].to_numpy()
+            lo = np.quantile(r, self.nom_margin)
+            hi = np.quantile(r, 1 - self.eol_margin)
+            if hi <= lo:
                 continue
+            s = 1.0 - np.clip((r - lo) / (hi - lo), 0.0, 1.0)
 
-            r = sign * df[m].to_numpy()
-            lo = np.quantile(r, q_low)
-            hi = np.quantile(r, q_high)
+            self.bounds_[m] = (lo, hi)
+            self.signs_[m] = sign
+            df_norm[m] = s
 
-            if hi > lo:
-                self.bounds_[m] = (lo, hi)
-            else:
-                self.signs_[m] = 0
-
+        # performance selection by range
+        groups = list(df_norm.groupby("unit"))
+        for m in self.performs:
+            unit_ranges = [g[m].max() - g[m].min() for _, g in groups]
+            avg_range = np.mean(unit_ranges)
+            self.range_scores_[m] = avg_range
+            self.corr_scores_[m] = df_norm[m].corr(df[self.cycle_col], method="spearman")
         return self
+
+    def get_valid_performances(self, min_range: float = 0.0, min_corr: float = 0.0):
+        check_is_fitted(self, "range_scores_")
+        performances = []
+        for m in self.performs:
+            if self.range_scores_[m] > min_range and abs(self.corr_scores_[m]) > min_corr:
+                performances.append(m)
+        return performances
 
     # --------------------------------------------------
     # Transform: normalize + prune by range
     # --------------------------------------------------
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        check_is_fitted(self, ["signs_", "bounds_"])
+        check_is_fitted(self, ["bounds_", "signs_"])
 
         out = df.copy()
 
         # 1️⃣ Normalize
-        for m in self.metrics:
-            sign = self.signs_.get(m, 0)
-
-            if sign == 0:
-                continue
-
+        for m in self.performs:
             lo, hi = self.bounds_[m]
+            sign = self.signs_[m]
             r = sign * out[m].to_numpy()
             out[m] = 1.0 - np.clip((r - lo) / (hi - lo), 0.0, 1.0)
         return out
-
-    def prune_performances_by_range(self, df_norm: pd.DataFrame):
-        active_metrics = list(self.get_performances())
-
-        for m in active_metrics:
-            unit_ranges = []
-
-            for _, g in df_norm.groupby("unit"):
-                unit_ranges.append(g[m].max() - g[m].min())
-
-            avg_range = np.mean(unit_ranges)
-            self.range_scores_[m] = avg_range  # useful for debugging
-
-            if avg_range < self.range_thresh:
-                self.signs_[m] = 0
 
 
 # ============================================================
@@ -180,29 +148,27 @@ class EstimationPipeline(BaseEstimator, TransformerMixin):
         self.residual_aggregator = residual_aggregator
         self.hi_transformer = hi_transformer
         self.hs_col = hs_col
+        self.y_scaler = StandardScaler()
 
     def get_performances(self):
         check_is_fitted(self, "is_fitted_")
-        return self.hi_transformer.get_performances()
+        return self.residual_aggregator.perform_cols
 
-    def prune_performances_by_range(self, df_norm: pd.DataFrame):
+    def get_valid_performances(self, min_range: float = 0.0, min_corr: float = 0.0):
         check_is_fitted(self, "is_fitted_")
-        return self.hi_transformer.prune_performances_by_range(df_norm)
+        return self.hi_transformer.get_valid_performances(min_range, min_corr)
 
     def fit(self, df: pd.DataFrame, y=None):
         # --- Stage 1: OC normalization (healthy only)
         df_h = df[df[self.hs_col] == 1.0]
-
+        Y = df_h[self.residual_aggregator.perform_cols].values
+        Y_scaled = self.y_scaler.fit_transform(Y)
         self.oc_pipe.fit(
             df_h[self.residual_aggregator.opcond_cols],
-            df_h[self.residual_aggregator.perform_cols].values.astype(np.float32),
+            Y_scaled.astype(np.float32),
         )
-
-        # inject fitted OC model
-        self.residual_aggregator.oc_pipe = self.oc_pipe
-
         # --- Stage 2: residuals on full data
-        residuals = self.residual_aggregator.transform(df)
+        residuals = self.residual_aggregator.transform(df, self.oc_pipe, self.y_scaler)
 
         # --- Stage 3: health index learning
         self.hi_transformer.fit(residuals)
@@ -210,15 +176,8 @@ class EstimationPipeline(BaseEstimator, TransformerMixin):
         self.is_fitted_ = True
         return self
 
-    def set_bounds(self, df: pd.DataFrame, q_low: float = 0, q_high: float = 1.0):
-        check_is_fitted(self, "is_fitted_")
-
-        residuals = self.residual_aggregator.transform(df)
-        self.hi_transformer.set_bounds(residuals, q_low, q_high)
-        return self
-
     def transform(self, df: pd.DataFrame):
         check_is_fitted(self, "is_fitted_")
 
-        residuals = self.residual_aggregator.transform(df)
+        residuals = self.residual_aggregator.transform(df, self.oc_pipe, self.y_scaler)
         return self.hi_transformer.transform(residuals)
