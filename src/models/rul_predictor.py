@@ -39,7 +39,6 @@ class RULPredictor:
         """
         assert len(pf_models) > 0, "At least one PF required"
         assert 0.0 < conf_level < 1.0
-
         self.pf_models = pf_models
         self.conf_level = conf_level
         self.max_life = max_life
@@ -54,10 +53,15 @@ class RULPredictor:
             name: [] for name in pf_models.keys()
         }
         self.history_rul: list[tuple[float, float, float]] = []
+        self.set_eval()
 
     # --------------------------------------------------
     # Core stepping
     # --------------------------------------------------
+
+    def set_eval(self):
+        for pf in self.pf_models.values():
+            pf.eval()
 
     @torch.no_grad()
     def predict(

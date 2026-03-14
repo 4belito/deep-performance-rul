@@ -12,14 +12,14 @@ N_REP = 3
 
 
 # DATA
-DATA_NAME = "DS06"
+DATA_NAME = "DS01"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 
 
 # OPERATION CONDITION NORMALIZATION
-EOL_MARG = 0.01
-NOM_MARG = 0.01
+EOL_MARG = 0.001
+NOM_MARG = 0.001
 MIN_CORR = 0.6
 MIN_RANGE = 0.6
 OPCOND_DIR = DATA_DIR / f"opcond_q{EOL_MARG}-{1-NOM_MARG}_corr{MIN_CORR}_range{MIN_RANGE}"
@@ -45,8 +45,9 @@ DEGR_MODEL_DIR = ESTIMATION_DIR / DegModel.name()
 
 # NETWORK CONTROLLER TRAINING
 # Network model parameters
-HIDDEN_DIMS = [256, 256, 128, 64, 32]  # [64, 64]  #     [16]  #
+HIDDEN_DIMS = [128, 64, 32]  # [64, 64]  #     [16]  #
 LEAKY_SLOPE = 0.05
+DROPOUT = 0.1
 # loss parameters
 WEIGHT_DECAY = 0  # 1e-4  #\
 GRADIENT_CLIP = None
@@ -70,7 +71,12 @@ PRED_STAT_SUFFIX = f"_{PRED_STAT}" if PRED_STAT != "mean" else ""
 LOSS_TAIL_SIZE_SUFFIX = f"_losstail{LOSS_TAIL_SIZE}" if LOSS_TAIL_SIZE != 1 else ""
 CURRENT_OBS_SUFFIX = "_currentobs" if CURRENT_OBS else ""
 
-PFNET_NAME = f"net{'x'.join(map(str, HIDDEN_DIMS))}" f"_leaky{LEAKY_SLOPE}" f"_npar{N_PARTICLES}_cv"
+PFNET_NAME = (
+    f"net{'x'.join(map(str, HIDDEN_DIMS))}"
+    f"_leaky{LEAKY_SLOPE}"
+    f"_dropout{DROPOUT}"
+    f"_npar{N_PARTICLES}_cv"
+)
 PFNET_NAME += (
     WEIGHT_DECAY_SUFFIX
     + GRADIENT_CLIP_SUFFIX

@@ -19,17 +19,22 @@ class ParticleFilterMLP(nn.Module):
         state_dim: int,
         hidden_dims: tuple[int, ...],
         activation: Callable[[], nn.Module],
+        dropout_p: float = 0.1,
     ):
         super().__init__()
 
         self.state_dim = state_dim
-        output_dim = 2 * state_dim + 1  # noise vector + correction vector
+        self.dropout_p = dropout_p
+        output_dim = 2 * state_dim + 1
 
         layers = []
         dims = (2, *hidden_dims, output_dim)
+
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation())
+            layers.append(nn.Dropout(dropout_p))
+
         layers.append(nn.Linear(dims[-2], dims[-1]))
 
         self.net = nn.Sequential(*layers)

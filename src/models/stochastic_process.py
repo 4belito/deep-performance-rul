@@ -131,7 +131,7 @@ class StochasticProcess(nn.Module, abc.ABC):
 
         ax.set_title(title)
         ax.set_xlabel("time")
-        ax.set_ylabel("scaled performance")
+        ax.set_ylabel("health index")
         ax.set_xlim([0, t.max()])
         ax.set_ylim([0, 1])
         if legend_loc:
