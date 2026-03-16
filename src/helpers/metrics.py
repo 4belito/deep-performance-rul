@@ -166,7 +166,7 @@ def pinaw(
     return np.mean(width, axis=axis) / range
 
 
-def build_metrics_table(
+def build_metrics_table_unitmean(
     df: pd.DataFrame,
     weights: str | None = None,
     picp_margin: float = 0.0,
@@ -208,3 +208,24 @@ def build_metrics_table(
         )
 
     return pd.DataFrame(rows)
+
+
+def build_metrics_table(
+    df: pd.DataFrame,
+    weights: str | None = None,
+    picp_margin: float = 0.0,
+) -> pd.DataFrame:
+
+    true = df["true_rul"].to_numpy()
+    mean = df["mean"].to_numpy()
+    lower = df["lower"].to_numpy()
+    upper = df["upper"].to_numpy()
+
+    metrics = {
+        "RMSE": rmse(true, mean, weights=weights),
+        "Score": score(true, mean),
+        "PICP": picp(true, lower, upper, margin=picp_margin, weights=weights),
+        "PINAW": pinaw(lower, upper, range=true.max(), weights=weights),
+    }
+
+    return metrics

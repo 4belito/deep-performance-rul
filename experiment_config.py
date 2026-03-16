@@ -8,7 +8,7 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 SEED = 42
-N_REP = 3
+N_REP = 10
 
 
 # DATA
