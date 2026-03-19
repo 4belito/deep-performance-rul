@@ -101,12 +101,13 @@ This trains the operation condition normalization model.
 
 ---
 
-### 3. Apply Operation Condition Normalization
+### 3. Apply Operation Condition Normalization (Estimation Step)
 
 Run:
 
+
 ```
-3-apply_ocnorm.ipynb
+3-estimation_data.ipynb
 ```
 
 Execute it for both:
@@ -116,11 +117,10 @@ Execute it for both:
 
 This step:
 
-- Applies operation condition normalization.
-- Normalizes performance metrics to the interval $[0,1]$.
-- Applies a causal filter to the performance signals.
-- Removes performance metrics that do not exhibit a valid degradation pattern after normalization.
-- Removes training units for which none of the selected performance metrics approach end-of-life behavior after normalization.
+- Applies operation condition normalization  
+- Normalizes performance metrics to the interval `[0, 1]`  
+- Removes metrics that do not exhibit a valid degradation pattern  
+- Removes training units for which none of the performance metrics approach their EOL
 
 The selected performance metrics are displayed before saving the processed data.
 
@@ -137,14 +137,12 @@ Run:
 This trains one degradation model per development unit. These models are used:
 
 - To initialize the particle filter state  
-- As a prior in the particle filter correction step  
+- As priors in the particle filter correction step  
 
 Optional visualization notebooks:
 
-- `4p-init_states_plots.ipynb`
-- `4p-mixture_model_plot.ipynb`
-
-These provide diagnostic plots of the degradation model fits and the corresponding mixture model.
+- `4p-init_states_plots.ipynb` — Plots the learned stochastic degradation processes  
+- `4p-mixture_model_plot.ipynb` — Plots the learned mixture model (initial PF prior)
 
 ---
 
@@ -158,51 +156,41 @@ Run:
 
 Train the controller network separately for each performance metric selected in Step 3.
 
-Only performance metrics retained after the normalization and filtering procedure should be used.
+Execute the notebook once for each retained performance metric, for example:
+
+- `perform_name = "T48"`
+
+
+Optional:
+
+- `5v-pf_test_video.ipynb` — Generates a video of EOL prediction on test data  
 
 ---
 
-### 6. Controller Network Evaluation (Optional)
-
-The following notebooks provide qualitative evaluation:
-
-- `6-pf_test_video.ipynb` - Network evalaution on testing data
-- `6-pf_eval_video.ipynb` - Network evaluaiton on trainin data
-- '6-plot_net_otput.ipynb' - Network output visualization notebook
-
-Evaluation protocol:
-- Use $n-1$ development units as offline units  
-- Predict on the remaining unit  
-
-These notebooks generate videos and diagnostic plots of EOL prediction behavior.
-
----
-
-### 7. RUL Prediction
+### 6. RUL Prediction
 
 Run:
 
 ```
-7-rul_avgtest.ipynb
+6-rul_test_rep.ipynb
 ```
 
-This predicts RUL on the test set for `N_REP` repetitions (default: `N_REP = 10`, configurable in `experiment_config.py`).
+This predicts RUL on the test set for `N_REP` repetitions  
+(default: `N_REP = 10`, configurable in `experiment_config.py`).
 
-Additional notebooks:
+Optional:
 
-- `7-rul_eval.ipynb`
-- `7-rul_test.ipynb`
-
-These generate videos for evaluation and test RUL predictions.
+- `6p-rul_test_rep_plot.ipynb` — RUL prediction plots  
+- `6v-rul_test_video.ipynb` — RUL prediction video  
 
 ---
 
-### 8. Compute Evaluation Metrics
+### 7. Evaluation
 
 Run:
 
 ```
-8-results_avg.ipynb
+7-results.ipynb
 ```
 
 This notebook:
@@ -210,9 +198,6 @@ This notebook:
 - Averages predictions across the `N_REP` runs  
 - Computes evaluation metrics in three regions:
 
-1. **Full lifetime**
-2. **Last 65 time steps** (where true RUL ≤ 65), for comparison with clipped state-of-the-art methods
-3. **Degradation region**, defined by the health state (`hs`) variable
-
-The results reported in the paper are included as markdown tables.  
-If experiment configurations are unchanged, the computed results should match those reported.
+1. **Full lifetime**  
+2. **Last 65 time steps** (RUL ≤ 65), for comparison with clipped methods  
+3. **Degradation region**, defined by the health-state (`hs`) variable  
