@@ -65,7 +65,7 @@ The following steps reproduce the results reported in the paper.
 
 ### 0. Experiment Configuration
 
-All experiment settings are defined in `experiment_config.py`.
+The main experiment settings are defined in `experiment_config.py`.
 
 The default values correspond to those used in the paper.  
 To reproduce the reported results, select the desired dataset in this file and keep all other parameters unchanged.
@@ -156,14 +156,14 @@ Run:
 
 Train the controller network separately for each performance metric selected in Step 3.
 
-Execute the notebook once for each retained performance metric, for example:
+Execute the notebook once for each performance metric, for example:
 
 - `perform_name = "T48"`
 
 
 Optional:
 
-- `5v-pf_test_video.ipynb` — Generates a video of EOL prediction on test data  
+- `5v-pf_test_video.ipynb` — Generates a video of the predictive distribution of the performance metric over time on test data. 
 
 ---
 
