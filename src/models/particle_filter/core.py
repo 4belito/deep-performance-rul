@@ -10,7 +10,7 @@ from src.models.particle_filter.mixture import MixtureDegModel
 # Diagonal Mahalanobis Noise (PF-safe)
 # ============================================================
 class DiagonalMahalanobisNoise(nn.Module):
-    def __init__(self, eps: float = 1e-6, max_scale: float = 0.1):
+    def __init__(self, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
         self.register_buffer("_sigma", None)
@@ -155,9 +155,6 @@ class ParticleFilter(nn.Module):
         )
         new_states = self.propagate(old_states, noise)
         new_weights = self.correct(new_states, onsets, init_ss, t_obs, s_obs, correction)
-
-        # ess = 1.0 / torch.sum(new_weights**2)
-        # print(f"{int(t_obs.item())}-ESS: {ess:.1f}/{len(new_weights)} ({ess/len(new_weights):.2f})")
         return new_states, new_weights
 
     @torch.no_grad()
