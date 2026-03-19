@@ -8,11 +8,11 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 SEED = 42
-N_REP = 10
+N_REP = 1
 
 
 # DATA
-DATA_NAME = "DS01"
+DATA_NAME = "DS06"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 
@@ -26,16 +26,9 @@ OPCOND_DIR = DATA_DIR / f"opcond_q{EOL_MARG}-{1-NOM_MARG}_corr{MIN_CORR}_range{M
 
 
 # ESTIMATION DATA
-# filter
-FILTER_DATA = False  # True  #
-FILT_NOISE_MEM = 0.01
-FILT_SMOOTH_STRENGTH = 20.0
-
 FAILED_THRESHOLD = 0.2
-
-FILTERED_SUFFIX = f"_filtered_n{FILT_NOISE_MEM}_s{FILT_SMOOTH_STRENGTH}" if FILTER_DATA else ""
 THRESHOLD_SUFFIX = f"_thr{FAILED_THRESHOLD}" if FAILED_THRESHOLD < 1 else ""
-ESTIMATION_NAME = "estimation" + THRESHOLD_SUFFIX + FILTERED_SUFFIX
+ESTIMATION_NAME = "estimation" + THRESHOLD_SUFFIX
 ESTIMATION_DIR = OPCOND_DIR / ESTIMATION_NAME
 
 
