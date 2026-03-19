@@ -74,7 +74,7 @@ def create_rul_prediction_frame(
     unit: int,
     dist_vmax: float = 0.25,
     dist_plot_mean: bool = False,
-    pred_label: Literal["mean", "mode"] = "mode",
+    pred_label: Literal["mean", "mode"] = "mean",
     dist_legend_loc="lower left",
 ):
     assert set(s_data_np) == set(rulpred.pf_models), "PF models and data keys do not match."

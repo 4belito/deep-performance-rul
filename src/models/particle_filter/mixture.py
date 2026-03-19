@@ -15,7 +15,7 @@ class MixtureDegModel(StochasticProcess):
     K = number of mixture components
     """
 
-    def __init__(self, components: list[DegModel], weights: torch.Tensor):
+    def __init__(self, components: list[DegModel], weights: torch.Tensor,max_life:float):
         super().__init__()
 
         assert len(components) > 0
@@ -31,6 +31,7 @@ class MixtureDegModel(StochasticProcess):
 
         self._init_from_tensors(
             deg_class=type(components[0]),
+            max_life = max_life,
             states=states,
             weights=weights,
             onsets=onsets,
@@ -40,6 +41,7 @@ class MixtureDegModel(StochasticProcess):
     def _init_from_tensors(
         self,
         deg_class: type[DegModel],
+        max_life: float,
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor | None = None,
@@ -51,6 +53,7 @@ class MixtureDegModel(StochasticProcess):
 
         self.n_components, self.state_dim = states.shape
         self.deg_class = deg_class
+        self.max_life = max_life
         self.states: torch.Tensor
         self.weights: torch.Tensor
         self.onsets: torch.Tensor
@@ -67,6 +70,7 @@ class MixtureDegModel(StochasticProcess):
     def from_particles(
         cls,
         deg_class: type[DegModel],
+        max_life:float,
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
         onsets: torch.Tensor,
@@ -80,6 +84,7 @@ class MixtureDegModel(StochasticProcess):
 
         obj._init_from_tensors(
             deg_class=deg_class,
+            max_life=max_life,
             states=states,
             weights=weights,
             onsets=onsets,
@@ -92,7 +97,7 @@ class MixtureDegModel(StochasticProcess):
         base_dist_s = self.build_mixture_distribution(params_s)
         return RULDistributionWrapper(
             base_dist=base_dist_s,
-            cap=100,
+            cap=self.max_life,
             n_samples=4096,
             quantile_search=0.999,
         )

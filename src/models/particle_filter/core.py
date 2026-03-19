@@ -54,10 +54,7 @@ class ParticleFilter(nn.Module):
     """
 
     def __init__(
-        self,
-        base_models: list[DegModel],
-        net: ParticleFilterMLP,
-        n_particles: int,
+        self, base_models: list[DegModel], net: ParticleFilterMLP, n_particles: int, max_life: float
     ):
         super().__init__()
 
@@ -76,6 +73,7 @@ class ParticleFilter(nn.Module):
         self._init_weights(n_particles)
         self.mixture = MixtureDegModel.from_particles(
             deg_class=type(base_models[0]),
+            max_life=max_life,
             states=self.base_states.clone(),
             weights=self.init_weights.clone(),
             onsets=self.base_onsets.clone(),
@@ -127,6 +125,7 @@ class ParticleFilter(nn.Module):
 
         loss_mixture = MixtureDegModel.from_particles(
             deg_class=self.deg_class,
+            max_life=self.max_life,
             states=new_states,
             weights=new_weights,
             onsets=onsets,
@@ -221,6 +220,10 @@ class ParticleFilter(nn.Module):
     @property
     def deg_class(self) -> type[DegModel]:
         return self.mixture.deg_class
+
+    @property
+    def max_life(self) -> type[DegModel]:
+        return self.mixture.max_life
 
     @property
     def n_particles(self) -> int:

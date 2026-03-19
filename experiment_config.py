@@ -8,11 +8,9 @@ from src.models.degradation.gamma import GammaDegradation as DegModel  # noqa: F
 from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F401
 
 SEED = 42
-N_REP = 1
-
 
 # DATA
-DATA_NAME = "DS06"
+DATA_NAME = "DS01"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 
@@ -42,27 +40,18 @@ HIDDEN_DIMS = [128, 64, 32]  # [64, 64]  #     [16]  #
 LEAKY_SLOPE = 0.05
 DROPOUT = 0.1
 # loss parameters
-WEIGHT_DECAY = 0  # 1e-4  #\
-GRADIENT_CLIP = None
 LOSS_TAIL_SIZE = 5
-CURRENT_OBS = True
 # early stopping score
 AVERSION = 0.5  # 0  #
 LOSS_WINDOW = 10
 
 # PF parameters
 N_PARTICLES = 2000
-PREDICTION_START_IDX = 0
-PRED_STAT = "mean"  # "mean" or "mode"
+MAX_LIFE = 100
 
-WEIGHT_DECAY_SUFFIX = f"_wdecay{WEIGHT_DECAY}" if WEIGHT_DECAY > 0 else ""
-GRADIENT_CLIP_SUFFIX = f"_gradclip{GRADIENT_CLIP}" if GRADIENT_CLIP is not None else ""
 AVERSION_SUFFIX = f"_aversion{AVERSION}" if AVERSION > 0 else ""
 LOSS_WINDOW_SUFFIX = f"_losswin{LOSS_WINDOW}" if LOSS_WINDOW > 1 else ""
-PREDICTION_START_IDX_SUFFIX = f"_pred{PREDICTION_START_IDX}" if PREDICTION_START_IDX > 0 else ""
-PRED_STAT_SUFFIX = f"_{PRED_STAT}" if PRED_STAT != "mean" else ""
 LOSS_TAIL_SIZE_SUFFIX = f"_losstail{LOSS_TAIL_SIZE}" if LOSS_TAIL_SIZE != 1 else ""
-CURRENT_OBS_SUFFIX = "_currentobs" if CURRENT_OBS else ""
 
 PFNET_NAME = (
     f"net{'x'.join(map(str, HIDDEN_DIMS))}"
@@ -70,21 +59,13 @@ PFNET_NAME = (
     f"_dropout{DROPOUT}"
     f"_npar{N_PARTICLES}_cv"
 )
-PFNET_NAME += (
-    WEIGHT_DECAY_SUFFIX
-    + GRADIENT_CLIP_SUFFIX
-    + AVERSION_SUFFIX
-    + LOSS_WINDOW_SUFFIX
-    + PREDICTION_START_IDX_SUFFIX
-    + PRED_STAT_SUFFIX
-    + LOSS_TAIL_SIZE_SUFFIX
-    + CURRENT_OBS_SUFFIX
-)
+PFNET_NAME += AVERSION_SUFFIX + LOSS_WINDOW_SUFFIX + LOSS_TAIL_SIZE_SUFFIX
 
 PFNET_DIR = DEGR_MODEL_DIR / PFNET_NAME
 
 
 # RESULTS
 UNCERTAINTY_LEVEL = 0.95
+N_REP = 10
 
 PRED_DIR = PFNET_DIR / f"pred_ulevel{UNCERTAINTY_LEVEL}"

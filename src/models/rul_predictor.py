@@ -24,10 +24,10 @@ class RULPredictor:
     def __init__(
         self,
         pf_models: dict[str, ParticleFilter],
+        max_life: float,
         conf_level: float = 0.95,
-        max_life: float = 100.0,
         current_obs: bool = True,
-        pred_stat: Literal["mean", "mode"] = "mode",
+        pred_stat: Literal["mean", "mode"] = "mean",
     ):
         """
         Parameters
@@ -68,7 +68,7 @@ class RULPredictor:
         self,
         t_data: np.ndarray,
         s_data: dict[str, np.ndarray],
-        start_idx: int,
+        start_idx: int = 0,
         on_step: Callable[[int, RULPredictor], None] | None = None,
     ):
         """
