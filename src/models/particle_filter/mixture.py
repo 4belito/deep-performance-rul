@@ -15,12 +15,18 @@ class MixtureDegModel(StochasticProcess):
     K = number of mixture components
     """
 
-    def __init__(self, components: list[DegModel], weights: torch.Tensor,max_life:float):
+    def __init__(
+        self,
+        components: list[DegModel],
+        weights: torch.Tensor,
+        units: torch.Tensor,
+        max_life: float,
+    ):
         super().__init__()
 
         assert len(components) > 0
         assert weights.ndim == 1
-        assert len(components) == len(weights)
+        assert len(components) == len(weights) == len(units)
 
         states = torch.stack(
             [c.get_state_vector() for c in components],
@@ -31,9 +37,10 @@ class MixtureDegModel(StochasticProcess):
 
         self._init_from_tensors(
             deg_class=type(components[0]),
-            max_life = max_life,
+            max_life=max_life,
             states=states,
             weights=weights,
+            units=units,
             onsets=onsets,
             init_ss=init_ss,
         )
@@ -44,12 +51,13 @@ class MixtureDegModel(StochasticProcess):
         max_life: float,
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
+        units: torch.Tensor,
         onsets: torch.Tensor | None = None,
         init_ss: torch.Tensor | None = None,
     ):
         assert states.ndim == 2
         assert weights.ndim == 1
-        assert states.shape[0] == weights.shape[0]
+        assert states.shape[0] == weights.shape[0] == units.shape[0]
 
         self.n_components, self.state_dim = states.shape
         self.deg_class = deg_class
@@ -58,6 +66,7 @@ class MixtureDegModel(StochasticProcess):
         self.weights: torch.Tensor
         self.onsets: torch.Tensor
         self.init_ss: torch.Tensor
+        self.units: torch.Tensor
         self.register_buffer("states", states)
         self.register_buffer(
             "weights",
@@ -65,16 +74,18 @@ class MixtureDegModel(StochasticProcess):
         )
         self.register_buffer("onsets", onsets)
         self.register_buffer("init_ss", init_ss)
+        self.register_buffer("units", units)
 
     @classmethod
     def from_particles(
         cls,
         deg_class: type[DegModel],
-        max_life:float,
+        max_life: float,
         states: torch.Tensor,  # [K, RP]
         weights: torch.Tensor,  # [K]
-        onsets: torch.Tensor,
-        init_ss: torch.Tensor,
+        onsets: torch.Tensor,  # [K]
+        init_ss: torch.Tensor,  # [K]
+        units: torch.Tensor,  # [K]
     ) -> MixtureDegModel:
         """
         Build a mixture directly from particle tensors (PF-friendly).
@@ -87,6 +98,7 @@ class MixtureDegModel(StochasticProcess):
             max_life=max_life,
             states=states,
             weights=weights,
+            units=units,
             onsets=onsets,
             init_ss=init_ss,
         )
@@ -129,6 +141,43 @@ class MixtureDegModel(StochasticProcess):
 
         return dist.MixtureSameFamily(mixture, components_dist)
 
+    @torch.no_grad()
+    def get_unit_mixture(self, unit: int) -> "MixtureDegModel":
+        mask = self.units == unit
+
+        if not mask.any():
+            return self
+
+        states = self.states[mask]
+        weights = self.weights[mask]
+        onsets = self.onsets[mask]
+        init_ss = self.init_ss[mask]
+        units = self.units[mask]
+
+        weights = weights / weights.sum().clamp_min(1e-12)
+
+        return MixtureDegModel.from_particles(
+            deg_class=self.deg_class,
+            max_life=self.max_life,
+            states=states,
+            weights=weights,
+            onsets=onsets,
+            init_ss=init_ss,
+            units=units,
+        )
+
+    def get_units_weights(self, all_units: torch.Tensor) -> dict[int, torch.Tensor]:
+        weights_dict = {}
+
+        for u in all_units:
+            mask = self.units == u
+            if mask.any():
+                weights_dict[int(u.item())] = self.weights[mask].sum()
+            else:
+                weights_dict[int(u.item())] = self.weights.new_tensor(0.0)
+
+        return weights_dict
+
     def get_states(self) -> torch.Tensor:
         return self.states
 
@@ -148,6 +197,7 @@ class MixtureDegModel(StochasticProcess):
         weights: torch.Tensor | None = None,
         onsets: torch.Tensor | None = None,
         init_ss: torch.Tensor | None = None,
+        units: torch.Tensor | None = None,
     ):
         if states is not None:
             self.states.copy_(states)
@@ -158,6 +208,8 @@ class MixtureDegModel(StochasticProcess):
             self.onsets.copy_(onsets)
         if init_ss is not None:
             self.init_ss.copy_(init_ss)
+        if units is not None:
+            self.units.copy_(units)
 
     @torch.no_grad()
     def mode(

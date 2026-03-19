@@ -46,6 +46,7 @@ class RULPredictor:
         self.t_obs: list[float] = []
         self.s_obs: dict[str, list[float]] = {name: [] for name in pf_models.keys()}
         self.pred_stat = pred_stat
+        self.all_units = torch.unique(next(iter(self.pf_models.values())).units)
 
         # --- history (for plotting / video) ---
         self.history_time: list[float] = []

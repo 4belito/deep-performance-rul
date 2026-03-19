@@ -16,16 +16,17 @@ class DegModel(StochasticProcess, abc.ABC):
     - During loading: restored from state_dict
     """
 
-    def __init__(self, onset: float | None = None, init_s: float | None = None):
+    def __init__(self, unit: int, onset: float | None = None, init_s: float | None = None):
         super().__init__()
-        self.onset: float
+        self.unit = unit
+        self.onset: torch.Tensor
         if onset is not None:
             self.register_buffer("onset", torch.tensor(float(onset)))
         else:
             # placeholder, will be overwritten by load_state_dict
             self.register_buffer("onset", torch.tensor(0.0))
 
-        self.init_s: float
+        self.init_s: torch.Tensor
         if init_s is not None:
             self.register_buffer("init_s", torch.tensor(float(init_s)))
         else:
@@ -94,6 +95,9 @@ class DegModel(StochasticProcess, abc.ABC):
 
     def get_init_s(self) -> float:
         return float(self.init_s)
+
+    def get_unit(self) -> int:
+        return int(self.unit)
 
     def get_state_vector(self) -> torch.Tensor:
         return torch.stack([getattr(self, name) for name in self.get_state_names()])

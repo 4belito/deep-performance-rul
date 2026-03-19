@@ -35,8 +35,8 @@ class GammaDegradation(DegModel):
     null_mean_value = 1e-6
     null_var_value = 1e-6
 
-    def __init__(self, onset: float | None = None, init_s: float | None = None):
-        super().__init__(onset=onset, init_s=init_s)
+    def __init__(self, unit: int, onset: float | None = None, init_s: float | None = None):
+        super().__init__(unit=unit, onset=onset, init_s=init_s)
 
         # -------------------------
         # Learn s0 directly in (0,1)

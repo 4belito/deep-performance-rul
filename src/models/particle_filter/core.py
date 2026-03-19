@@ -10,7 +10,7 @@ from src.models.particle_filter.mixture import MixtureDegModel
 # Diagonal Mahalanobis Noise (PF-safe)
 # ============================================================
 class DiagonalMahalanobisNoise(nn.Module):
-    def __init__(self, eps: float = 1e-6, max_scale: float = 0.1):
+    def __init__(self, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
         self.register_buffer("_sigma", None)
@@ -78,6 +78,7 @@ class ParticleFilter(nn.Module):
             weights=self.init_weights.clone(),
             onsets=self.base_onsets.clone(),
             init_ss=self.base_init_ss.clone(),
+            units=self.base_units.clone(),
         )
 
     # --------------------------------------------------------
@@ -96,6 +97,7 @@ class ParticleFilter(nn.Module):
             weights=self.init_weights.clone(),
             onsets=self.base_onsets.clone(),
             init_ss=self.base_init_ss.clone(),
+            units=self.base_units.clone(),
         )
 
     def step(self, t_obs: torch.Tensor, s_obs: torch.Tensor) -> MixtureDegModel:
@@ -130,6 +132,7 @@ class ParticleFilter(nn.Module):
             weights=new_weights,
             onsets=onsets,
             init_ss=init_ss,
+            units=self.units.clone(),
         )
         return new_states, new_weights, loss_mixture
 
@@ -173,6 +176,7 @@ class ParticleFilter(nn.Module):
             weights=torch.full((n,), 1.0 / n, device=self.weights.device),
             onsets=self.onsets[idx],
             init_ss=self.init_ss[idx],
+            units=self.units[idx],
         )
         self.prior_states = self.prior_states[idx]
 
@@ -249,6 +253,10 @@ class ParticleFilter(nn.Module):
     def init_ss(self) -> torch.Tensor:
         return self.mixture.init_ss
 
+    @property
+    def units(self) -> torch.Tensor:
+        return self.mixture.units
+
     def _init_weights(self, n_particles: int):
         uniform = torch.full(
             (n_particles,),
@@ -266,15 +274,19 @@ class ParticleFilter(nn.Module):
         base_n = len(base_models)
         allocation = self._balanced_allocation(n_particles, base_n)
 
-        base_states, base_onsets, base_init_ss = self._expand_base_models(base_models, allocation)
+        base_states, base_onsets, base_init_ss, base_units = self._expand_base_models(
+            base_models, allocation
+        )
 
         self.base_states: torch.Tensor
         self.base_onsets: torch.Tensor
         self.base_init_ss: torch.Tensor
+        self.base_units: torch.Tensor
 
         self.register_buffer("base_states", base_states)
         self.register_buffer("base_onsets", base_onsets)
         self.register_buffer("base_init_ss", base_init_ss)
+        self.register_buffer("base_units", base_units)
 
     def _balanced_allocation(self, n_particles: int, base_n: int) -> list[int]:
         assert n_particles >= base_n
@@ -292,14 +304,17 @@ class ParticleFilter(nn.Module):
         states = []
         onsets = []
         init_ss = []
+        units = []
 
         for m, repeat in zip(base_models, allocation):
             states.append(m.get_state_vector().unsqueeze(0).repeat(repeat, 1))
             onsets.append(torch.full((repeat,), m.get_onset()))
             init_ss.append(torch.full((repeat,), m.get_init_s()))
+            units.append(torch.full((repeat,), m.get_unit(), dtype=torch.long))
 
         return (
             torch.cat(states, dim=0),
             torch.cat(onsets),
             torch.cat(init_ss),
+            torch.cat(units),
         )
