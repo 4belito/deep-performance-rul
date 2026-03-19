@@ -27,7 +27,7 @@ class RULPredictor:
         max_life: float,
         conf_level: float = 0.95,
         current_obs: bool = True,
-        pred_stat: Literal["mean", "mode"] = "mean",
+        pred_stat: Literal["mean", "median"] = "mean",
     ):
         """
         Parameters
@@ -143,6 +143,81 @@ class RULPredictor:
     # --------------------------------------------------
 
     @torch.no_grad()
+    def unit_weights(self) -> dict[int, float]:
+        """
+        Compute average unit weights across PFs.
+        Returns dict: {unit: weight}
+        """
+        # --- initialize dict with python ints ---
+        unit_weights_dict = {int(u.item()): 0.0 for u in self.all_units}
+
+        # --- accumulate ---
+        for pf in self.pf_models.values():
+            w_dict = pf.mixture.get_units_weights(self.all_units)
+
+            for u in unit_weights_dict:
+                unit_weights_dict[u] += float(w_dict[u])
+
+        # --- average ---
+        n_pf = len(self.pf_models)
+        for u in unit_weights_dict:
+            unit_weights_dict[u] /= n_pf
+
+        return unit_weights_dict
+
+    @torch.no_grad()
+    def unit_categorical(self):
+        w_dict = self.unit_weights()
+
+        pi = torch.tensor(
+            [w_dict[int(u.item())] for u in self.all_units],
+        )
+
+        pi = pi / pi.sum().clamp_min(1e-12)
+
+        return torch.distributions.Categorical(probs=pi)
+
+    def unit_sample(self, n_samples: int) -> torch.Tensor:
+        """
+        Sample multiple units.
+        Returns tensor of shape [n_samples]
+        """
+        cat = self.unit_categorical()
+        idx = cat.sample((n_samples,))  # [n_samples]
+
+        return self.all_units[idx]  # [n_samples]
+
+    @torch.no_grad()
+    def _mc_system_eol(self, n_samples: int = 4096):
+
+        s0 = torch.tensor([0.0])
+
+        # --- sample units ---
+        units_samples = self.unit_sample(n_samples)
+
+        unique_units, counts = torch.unique(units_samples, return_counts=True)
+
+        system_samples = []
+
+        for u, count in zip(unique_units.tolist(), counts.tolist()):
+
+            comp_samples = []
+
+            for pf in self.pf_models.values():
+                sub_mix = pf.mixture.get_unit_mixture(u)
+
+                samples = sub_mix.distribution(s0).sample((count,))
+                comp_samples.append(samples.squeeze(-1))  # [count]
+
+            comp_samples = torch.stack(comp_samples, dim=1)  # [count, J]
+
+            system = comp_samples.min(dim=1).values  # [count]
+
+            system_samples.append(system)
+
+        return torch.cat(system_samples)
+
+    @torch.no_grad()
     def record_component_eol(self):
         """
         Compute and store per-component EOL uncertainty intervals.
@@ -160,11 +235,11 @@ class RULPredictor:
     # --------------------------------------------------
 
     @torch.no_grad()
-    def system_rul(self, current_time: float) -> tuple[float, float, float]:
+    def system_rul(self, current_time: float, n_smaples=4096) -> tuple[float, float, float]:
         """
         Convert system EOL to system RUL.
         """
-        eol_lower, eol_pred, eol_upper = self.system_eol()
+        eol_lower, eol_pred, eol_upper = self.system_eol(n_samples=n_smaples)
 
         return (
             max(eol_lower - current_time, 0.0),
@@ -173,29 +248,42 @@ class RULPredictor:
         )
 
     @torch.no_grad()
-    def system_eol(self) -> tuple[float, float, float]:
-        """
-        Conservative system EOL = min over component EOLs.
-        """
-        lowers = []
-        preds = []
-        uppers = []
+    def system_eol(self, n_samples) -> tuple[float, float, float]:
+        system_eol_samples = self._mc_system_eol(n_samples)
+        lower = torch.quantile(system_eol_samples, (1.0 - self.conf_level) / 2.0).item()
+        upper = torch.quantile(system_eol_samples, 1.0 - (1.0 - self.conf_level) / 2.0).item()
+        if self.pred_stat == "mean":
+            pred = system_eol_samples.mean().item()
+        elif self.pred_stat == "median":
+            pred = torch.median(system_eol_samples).item()
+        else:
+            raise ValueError(f"Invalid pred_stat: {self.pred_stat}")
+        return lower, pred, upper
 
-        for name in self.pf_models.keys():
-            eol_lower, eol_pred, eol_upper = self.history_component_eol[name][-1]
-            lowers.append(eol_lower)
-            preds.append(eol_pred)
-            uppers.append(eol_upper)
+    # @torch.no_grad()
+    # def system_eol(self) -> tuple[float, float, float]:
+    #     """
+    #     Conservative system EOL = min over component EOLs.
+    #     """
+    #     lowers = []
+    #     preds = []
+    #     uppers = []
 
-        # Conservative aggregation in EOL-space
-        eol_lower, eol_pred, eol_upper = self.eol_aggregation(lowers, preds, uppers)
+    #     for name in self.pf_models.keys():
+    #         eol_lower, eol_pred, eol_upper = self.history_component_eol[name][-1]
+    #         lowers.append(eol_lower)
+    #         preds.append(eol_pred)
+    #         uppers.append(eol_upper)
 
-        # Physical bounds
-        eol_lower = float(np.clip(eol_lower, 0.0, self.max_life))
-        eol_pred = float(np.clip(eol_pred, 0.0, self.max_life))
-        eol_upper = float(np.clip(eol_upper, 0.0, self.max_life))
+    #     # Conservative aggregation in EOL-space
+    #     eol_lower, eol_pred, eol_upper = self.eol_aggregation(lowers, preds, uppers)
 
-        return eol_lower, eol_pred, eol_upper
+    #     # Physical bounds
+    #     eol_lower = float(np.clip(eol_lower, 0.0, self.max_life))
+    #     eol_pred = float(np.clip(eol_pred, 0.0, self.max_life))
+    #     eol_upper = float(np.clip(eol_upper, 0.0, self.max_life))
+
+    #     return eol_lower, eol_pred, eol_upper
 
     @torch.no_grad()
     def eol_aggregation(
@@ -228,11 +316,11 @@ class RULPredictor:
     # --------------------------------------------------
 
     @torch.no_grad()
-    def record_system_rul(self, current_time: float):
+    def record_system_rul(self, current_time: float, n_samples=4096):
         """
         Compute and store system-level RUL at current time.
         """
-        lower, mean, upper = self.system_rul(current_time)
+        lower, mean, upper = self.system_rul(current_time, n_smaples=n_samples)
 
         self.history_time.append(float(current_time))
         self.history_rul.append((lower, mean, upper))
