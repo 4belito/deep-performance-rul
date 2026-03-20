@@ -226,7 +226,7 @@ class RULPredictor:
             device = pf.mixture.states.device
             s0 = torch.tensor([0.0], device=device)
             lower, pred, upper = pf.mixture.uncertainty_interval(
-                s0, self.conf_level, pred_stat=self.pred_stat
+                s0, self.conf_level, pred_stat="mean"
             )
             self.history_component_eol[name].append((lower.item(), pred.item(), upper.item()))
 
@@ -235,11 +235,11 @@ class RULPredictor:
     # --------------------------------------------------
 
     @torch.no_grad()
-    def system_rul(self, current_time: float, n_smaples=4096) -> tuple[float, float, float]:
+    def system_rul(self, current_time: float, n_samples=4096) -> tuple[float, float, float]:
         """
         Convert system EOL to system RUL.
         """
-        eol_lower, eol_pred, eol_upper = self.system_eol(n_samples=n_smaples)
+        eol_lower, eol_pred, eol_upper = self.system_eol(n_samples=n_samples)
 
         return (
             max(eol_lower - current_time, 0.0),
@@ -320,7 +320,7 @@ class RULPredictor:
         """
         Compute and store system-level RUL at current time.
         """
-        lower, mean, upper = self.system_rul(current_time, n_smaples=n_samples)
+        lower, mean, upper = self.system_rul(current_time, n_samples=n_samples)
 
         self.history_time.append(float(current_time))
         self.history_rul.append((lower, mean, upper))

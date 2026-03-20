@@ -10,7 +10,7 @@ from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F4
 SEED = 42
 
 # DATA
-DATA_NAME = "DS01"
+DATA_NAME = "DS05"
 
 DATA_DIR = Path("experiments") / DATA_NAME
 

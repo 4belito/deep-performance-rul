@@ -60,8 +60,10 @@ class StochasticProcess(nn.Module, abc.ABC):
             pred = self.distribution(s).mean
         elif pred_stat == "mode":
             pred = self.distribution(s).mode
+        elif pred_stat == "median":
+            pred = self.quantile_mc(s, 0.5, n_samples)
         else:
-            raise ValueError("pred_stat must be 'mean' or 'mode'")
+            raise ValueError("pred_stat must be 'mean' or 'mode' or 'median'")
         return lower, pred, upper
 
     def _device(self) -> torch.device:
