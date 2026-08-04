@@ -17,7 +17,7 @@ class ParticleFilterMLP(nn.Module):
     def __init__(
         self,
         state_dim: int,
-        hidden_dims: tuple[int, ...],
+        hidden_dims: list[int],
         activation: Callable[[], nn.Module],
         dropout_p: float = 0.1,
     ):

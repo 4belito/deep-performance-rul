@@ -1,5 +1,6 @@
 """
-Experiment configuration file. This file is imported in all notebooks to ensure that the same data and model configuration is used across all experiments.
+Experiment configuration file. This file is imported in all notebooks to ensure that the
+same data and model configuration is used across all experiments.
 """
 
 from pathlib import Path
@@ -10,17 +11,25 @@ from src.models.degradation.gamma import GammaDegradationNLL as Loss  # noqa: F4
 SEED = 42
 
 # DATA
-DATA_NAME = "DS01"
+DATA_NAME = "DS01"  # "DS06"  # "DS05"  # "DS03"  #
 
-DATA_DIR = Path("experiments") / DATA_NAME
-
+# DATA_DIR = Path("experiments") / DATA_NAME
+DATA_DIR = (
+    Path("/lustre")
+    / Path.home().name
+    / "deep-performance-rul"
+    / "experiments"
+    / DATA_NAME
+)
 
 # OPERATION CONDITION NORMALIZATION
 EOL_MARG = 0.001
 NOM_MARG = 0.001
 MIN_CORR = 0.6
 MIN_RANGE = 0.6
-OPCOND_DIR = DATA_DIR / f"opcond_q{EOL_MARG}-{1-NOM_MARG}_corr{MIN_CORR}_range{MIN_RANGE}"
+OPCOND_DIR = (
+    DATA_DIR / f"opcond_q{EOL_MARG}-{1 - NOM_MARG}_corr{MIN_CORR}_range{MIN_RANGE}"
+)
 
 
 # ESTIMATION DATA

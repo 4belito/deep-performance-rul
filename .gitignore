@@ -48,3 +48,6 @@ experiments*/
 checkpoints/
 *.pt
 *.pth
+
+# Paper
+paper/
