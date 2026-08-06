@@ -10,6 +10,23 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 
+def build_activation(net_args: dict) -> Callable[[], nn.Module]:
+    """Return an activation-module factory from a NETWORK hparam dict."""
+    name = str(net_args.get("ACTIVATION", "leaky")).lower()
+    slope = float(net_args.get("LEAKY_SLOPE", 0.05))
+    table: dict[str, Callable[[], nn.Module]] = {
+        "leaky": lambda: nn.LeakyReLU(slope),
+        "relu": lambda: nn.ReLU(),
+        "tanh": lambda: nn.Tanh(),
+        "gelu": lambda: nn.GELU(),
+        "silu": lambda: nn.SiLU(),
+        "swish": lambda: nn.SiLU(),
+    }
+    if name not in table:
+        raise ValueError(f"Unknown ACTIVATION '{name}'")
+    return table[name]
+
+
 # ============================================================
 # Particle-Filter MLP
 # ============================================================

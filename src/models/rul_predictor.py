@@ -118,19 +118,17 @@ class RULPredictor:
         for name, pf in self.pf_models.items():
             device = pf.states.device
 
-            t_tensor = torch.tensor(
-                self.t_obs,
-                dtype=torch.float32,
-                device=device,
-            )
-            s_tensor = torch.tensor(
-                self.s_obs[name],
-                dtype=torch.float32,
-                device=device,
-            )
+            # current_obs only needs the latest sample; avoid rebuilding the whole
+            # growing history tensor every step (was O(T^2) per unit)
             if self.current_obs:
-                t_tensor = t_tensor[[-1]]
-                s_tensor = s_tensor[[-1]]
+                t_list = [self.t_obs[-1]]
+                s_list = [self.s_obs[name][-1]]
+            else:
+                t_list = self.t_obs
+                s_list = self.s_obs[name]
+
+            t_tensor = torch.tensor(t_list, dtype=torch.float32, device=device)
+            s_tensor = torch.tensor(s_list, dtype=torch.float32, device=device)
 
             pf.step(
                 s_obs=s_tensor,
@@ -152,7 +150,9 @@ class RULPredictor:
             lower, pred, upper = pf.mixture.uncertainty_interval(
                 s0, self.conf_level, pred_stat=self.pred_stat
             )
-            self.history_component_eol[name].append((lower.item(), pred.item(), upper.item()))
+            self.history_component_eol[name].append(
+                (lower.item(), pred.item(), upper.item())
+            )
 
     # --------------------------------------------------
     # System-level RUL

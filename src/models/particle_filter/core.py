@@ -56,10 +56,13 @@ class ParticleFilter(nn.Module):
     def __init__(
         self,
         base_models: list[DegModel],
-        net: ParticleFilterMLP,
+        net: ParticleFilterMLP | None,
         n_particles: int,
         max_life: float,
         use_net: bool = True,
+        const_noise=None,
+        const_prior=None,
+        const_lik=None,
     ):
         super().__init__()
 
@@ -70,6 +73,21 @@ class ParticleFilter(nn.Module):
 
         self.net = net
         self.use_net = use_net
+        # fixed gains used when use_net=False (bootstrap-PF baseline). Each may be
+        # None (-> default), a scalar (broadcast over state dims), or a
+        # length-state_dim vector (per-dim). Defaults = standard bootstrap PF.
+        cn = 1.0 if const_noise is None else const_noise
+        cp = 0.0 if const_prior is None else const_prior
+        cl = 1.0 if const_lik is None else const_lik
+        self.register_buffer(
+            "const_noise", torch.as_tensor(cn, dtype=torch.float32).reshape(-1)
+        )
+        self.register_buffer(
+            "const_prior", torch.as_tensor(cp, dtype=torch.float32).reshape(-1)
+        )
+        self.register_buffer(
+            "const_lik", torch.as_tensor(cl, dtype=torch.float32).reshape(-1)
+        )
         self._init_base(base_models, n_particles)
 
         # --- noise model ---
@@ -160,10 +178,12 @@ class ParticleFilter(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
         if self.use_net:
-            noise, correction = self.net.tuple_forward_mean(t_obs, s_obs)
+            net = self.net
+            assert net is not None
+            noise, correction = net.tuple_forward_mean(t_obs, s_obs)
         else:
-            # ablation: fixed unit noise, pure likelihood weights
-            noise = torch.ones(1, device=old_states.device)
+            # baseline: fixed (tunable) noise gains; correction set in correct()
+            noise = self.const_noise
             correction = None
         new_states = self.propagate(old_states, noise)
         new_weights = self.correct(
@@ -206,11 +226,13 @@ class ParticleFilter(nn.Module):
         onsets = onsets.unsqueeze(1)
         init_ss = init_ss.unsqueeze(1)
         if correction is None:
-            # ablation: standard likelihood weighting, no prior regularization
-            correct_prior = torch.zeros(self.state_dim, device=states.device)
-            correct_lik = torch.ones(1, device=states.device)
+            # baseline: fixed (tunable) prior weights and likelihood temperature
+            correct_prior = self.const_prior
+            correct_lik = self.const_lik
         else:
-            correct_prior, correct_lik = self.net.correction_tuple(correction)
+            net = self.net
+            assert net is not None
+            correct_prior, correct_lik = net.correction_tuple(correction)
         params = self.deg_class.forward_with_states(s_obs, states, onsets, init_ss)
         comp_dist = self.deg_class.build_distribution_from_params(params)
 
