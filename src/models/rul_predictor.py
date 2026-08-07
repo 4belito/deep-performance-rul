@@ -196,14 +196,41 @@ class RULPredictor:
 
         return eol_lower, eol_pred, eol_upper
 
-    @torch.no_grad()
+    @staticmethod
     def eol_aggregation(
-        self,
         lowers: list[float],
         means: list[float],
         uppers: list[float],
     ) -> tuple[float, float, float]:
         return min(lowers), min(means), min(uppers)
+
+    @classmethod
+    def aggregate_components(
+        cls,
+        component_df: pd.DataFrame,
+        group_cols: tuple[str, ...] = ("unit", "time"),
+        keep_cols: tuple[str, ...] = ("rep", "seed", "true_rul"),
+    ) -> pd.DataFrame:
+        """
+        Build system RUL from per-metric component RUL frames without re-running
+        the filters. Rows are grouped per (unit, time) and combined with the same
+        conservative min aggregation used online (`eol_aggregation`). Expects the
+        component RUL columns ``lower``, ``mean``, ``upper`` (already RUL-space).
+        """
+        keys = list(group_cols)
+        records = []
+        for group_key, g in component_df.groupby(keys, sort=False):
+            lower, mean, upper = cls.eol_aggregation(
+                g["lower"].tolist(), g["mean"].tolist(), g["upper"].tolist()
+            )
+            key_tuple = group_key if isinstance(group_key, tuple) else (group_key,)
+            record = dict(zip(keys, key_tuple))
+            record.update(lower=lower, mean=mean, upper=upper)
+            for col in keep_cols:
+                if col in g.columns:
+                    record[col] = g[col].iloc[0]
+            records.append(record)
+        return pd.DataFrame.from_records(records)
 
     def reset(self):
         """

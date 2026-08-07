@@ -112,7 +112,8 @@ PFNET_ARGS: dict[int, dict[str, dict[str, Any] | None]] = {
     # surface without the LeakyReLU kinks; tests whether extra width helps.
     6: make_args(net=network(hidden_dims=[16, 16], activation="tanh")),
     # args7: even smaller network to test the limits of underfitting.
-    7: make_args(net=network(hidden_dims=[16, 16])),
+    7: make_args(net=network(hidden_dims=[16])),
+    8: make_args(net=network(activation="tanh")),
     # args10: tuned bootstrap-PF baseline. net=None -> no network; constant gains
     # from the 3-parameter Optuna search (5o-pf_controller_optuna).
     10: make_args(net=None, gains_=gains(noise=1.7317, prior=0.0496, lik=0.266)),

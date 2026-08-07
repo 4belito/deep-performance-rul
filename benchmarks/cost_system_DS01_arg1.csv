@@ -1,0 +1,3 @@
+config,per-step ms (all metrics),trajectory ms (all metrics)
+constant-gain,4.40696639319261,396.6269753873348
+pfRUL (neural),5.011945455852482,451.0750910267234
