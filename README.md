@@ -1,6 +1,6 @@
 # deep-performance-rul
 
-Code accompanying the paper *“A Deep Learning Approach for Performance-Based Prediction of Remaining Useful Life”*.  
+Code accompanying the paper *“[Performance-based probabilistic RUL prediction via particle filtering with neural-guided inference](https://doi.org/10.1016/j.ymssp.2026.115026)”*.  
 
 This repository implements a performance-based RUL prediction framework that preserves an explicit estimation–prediction structure, combining latent health index estimation with particle filter–based uncertainty-aware degradation modeling.
 
