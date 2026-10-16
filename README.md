@@ -5,6 +5,15 @@ Code accompanying the paper *“[Performance-based probabilistic RUL prediction 
 This repository implements a performance-based RUL prediction framework that preserves an explicit estimation–prediction structure, combining latent health index estimation with particle filter–based uncertainty-aware degradation modeling.
 
 
+## Graphical Abstract
+
+<div align="center">
+  <a href="assets/graphical_abstract.pdf">
+    <img src="assets/graphical_abstract.png" alt="Graphical abstract" width="100%">
+  </a>
+</div>
+
+
 ## Qualitative Results
 
 <div align="center">
